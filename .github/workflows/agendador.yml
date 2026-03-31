@@ -1,0 +1,29 @@
+name: Aranha FPP - Sincronização Semanal
+
+on:
+  schedule:
+    # 0 = minuto, 9 = hora, * * = dia/mês, 1 = Segunda-feira
+    # Nota: O horário é em UTC (9h UTC é 10h em Portugal Continental no inverno)
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Permite correr manualmente quando quiseres
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v3
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Instalar Dependências
+        run: npm install
+
+      - name: Correr a Aranha
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: node scraper.js
