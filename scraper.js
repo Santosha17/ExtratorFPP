@@ -6,7 +6,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 // ---------------------------------
 
-const URL = "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Draws";
+const URL = "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Matches";
 
 // Função Mágica para Sincronizar com o Supabase
 async function sincronizarComSupabase(jogos) {
@@ -88,7 +88,8 @@ async function sincronizarComSupabase(jogos) {
     console.log("🚀 A iniciar a 'Aranha' de Extração ULTIMATE + Sincronização...");
 
     const browser = await puppeteer.launch({
-        headless: true,
+        headless: "new", // Seguro para a nuvem
+        args: ['--no-sandbox', '--disable-setuid-sandbox'], // Evita que o GitHub Actions bloqueie o Chrome
         defaultViewport: null,
     });
 
@@ -202,8 +203,14 @@ async function sincronizarComSupabase(jogos) {
                         const homeTeamRaw = validHeaders[dataIndex + 1];
                         const awayTeamRaw = validHeaders[dataIndex + 2];
 
-                        // ADICIONADA A BARRA (' / ') QUE TINHAS PEDIDO PARA SEPARAR OS JOGADORES!
-                        const cleanText = (text) => text.replace(/✔/g, '').replace(/\n/g, ' / ').replace(/\s*\/\s*\/\s*/g, ' / ').replace(/\s+/g, ' ').replace(/^\s*\/\s*/, '').replace(/\/\s*$/, '').trim();
+                        // CORREÇÃO FINAL DOS NOMES!
+                        const cleanText = (text) => text
+                            .replace(/✔/g, '')
+                            .replace(/\n/g, ' / ')
+                            .replace(/\s*\/\s*\/\s*/g, ' / ')
+                            .replace(/\s+/g, ' ')
+                            .replace(/^[ \/]+|[ \/]+$/g, '') // Remove lixo das pontas (barras ou espaços)
+                            .trim();
 
                         const rows = document.querySelectorAll('tr');
                         rows.forEach(row => {
