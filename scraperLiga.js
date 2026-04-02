@@ -47,13 +47,49 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
+// Memória Cache para não sobrecarregar a BD com equipas repetidas
+const cacheEquipas = new Set();
+
+// --- NOVA FUNÇÃO: REGISTAR EQUIPA ---
+async function registarEquipa(nome, zona, tipo, categoria, grupo) {
+    const idUnico = `${nome}|${zona}|${tipo}|${categoria}|${grupo}`;
+
+    // Se já registámos esta equipa nesta sessão, ignoramos
+    if (cacheEquipas.has(idUnico)) return;
+
+    const payload = { nome, zona, tipo, categoria, grupo };
+
+    try {
+        await fetch(`${SUPABASE_URL}/rest/v1/equipas`, {
+            method: 'POST',
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                'Content-Type': 'application/json',
+                // O Prefer=resolution=ignore-duplicates faz com que o Supabase ignore a inserção
+                // se a equipa já existir lá (graças ao UNIQUE que criámos no SQL)
+                'Prefer': 'resolution=ignore-duplicates'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        cacheEquipas.add(idUnico); // Marca como registada na memória
+    } catch (error) {
+        console.error(`   ⚠️ Aviso: Falha ao tentar registar a equipa ${nome}`, error.message);
+    }
+}
+
 // --- FUNÇÃO: GUARDA DIRETAMENTE NO MOMENTO DA EXTRAÇÃO ---
 async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     for (const jogo of jogosExtraidos) {
         try {
+            // 0. GRAVAR AS EQUIPAS PRIMEIRO
+            await registarEquipa(jogo.equipa_casa, jogo.zona, jogo.tipo, jogo.categoria, jogo.grupo);
+            await registarEquipa(jogo.equipa_fora, jogo.zona, jogo.tipo, jogo.categoria, jogo.grupo);
+
             let matchId;
 
-            // 1. Procurar se o "Encontro" principal já existe (agora usando também a coluna "tipo")
+            // 1. Procurar se o "Encontro" principal já existe
             const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogo.equipa_casa)}&away_team=eq.${encodeURIComponent(jogo.equipa_fora)}&zona=eq.${encodeURIComponent(jogo.zona)}&tipo=eq.${encodeURIComponent(jogo.tipo)}&categoria=eq.${encodeURIComponent(jogo.categoria)}&select=id`;
             const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
             const matchesDb = await resMatch.json();
@@ -163,7 +199,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
             });
 
             for (const cat of categorias) {
-                // Mensagem de log atualizada
                 console.log(`\n🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
 
                 await page.goto(torneio.url, { waitUntil: 'networkidle2' });
@@ -268,8 +303,8 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                     if (rubber && score && score !== "" && score !== "Tba") {
                                         details.push({
                                             zona: nomeZona,
-                                            tipo: tipoTorneio,    // <-- GUARDA O TIPO AQUI (Absolutos/Veteranos)
-                                            categoria: nomeCat,   // <-- GUARDA A CATEGORIA AQUI (M2, +35)
+                                            tipo: tipoTorneio,
+                                            categoria: nomeCat,
                                             grupo: nomeGrupo,
                                             equipa_casa: homeTeamRaw,
                                             equipa_fora: awayTeamRaw,
@@ -282,7 +317,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                 }
                             });
                             return details;
-                        }, cat.nome, grupo, torneio.nome, torneio.tipo); // <-- Variáveis injetadas
+                        }, cat.nome, grupo, torneio.nome, torneio.tipo);
 
                         if (jogosExtraidos.length > 0) {
                             await guardarNoSupabaseEmTempoReal(jogosExtraidos);
