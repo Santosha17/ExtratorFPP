@@ -4,7 +4,6 @@ const fs = require('fs');
 // --- CONFIGURAÇÕES DO SUPABASE ---
 const SUPABASE_URL = "https://eezbrdjncjjgmjueftgg.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlemJyZGpuY2pqZ21qdWVmdGdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTEzNzEyMywiZXhwIjoyMDkwNzEzMTIzfQ.KDGRw0MClRKxYUyOMiglb8VYGn8uHii79i-3hYkAWlc";
-
 // ---------------------------------
 
 const TORNEIOS_LIGA = [
