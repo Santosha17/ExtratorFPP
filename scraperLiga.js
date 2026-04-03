@@ -107,7 +107,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
                 const newMatch = await resCreateMatch.json();
                 matchId = newMatch[0].id;
-                console.log(`   🆕 Novo Encontro: ${jogo.equipa_casa} vs ${jogo.equipa_fora} | Data: ${jogo.data_jogo || "S/ Data"}`);
+                console.log(`   🆕 Novo Encontro: ${jogo.equipa_casa} vs ${jogo.equipa_fora} | Data/Hora: ${jogo.data_jogo || "S/ Data"}`);
             } else {
                 matchId = matchesDb[0].id;
 
@@ -121,6 +121,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                         },
                         body: JSON.stringify({ data_jogo: jogo.data_jogo })
                     });
+                    console.log(`   🔄 Data/Hora Atualizada: ${jogo.equipa_casa} vs ${jogo.equipa_fora} para ${jogo.data_jogo}`);
                 }
             }
 
@@ -163,7 +164,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
 // --- O MOTOR DO PUPPETEER ---
 (async () => {
-    console.log("🚀 A iniciar a 'Aranha' PadelNetwork - EDIÇÃO BLINDADA...");
+    console.log("🚀 A iniciar a 'Aranha' PadelNetwork - COM EXTRAÇÃO DE DATA E HORA...");
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -250,7 +251,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                         if (numJogos === 0) continue;
 
                         for (let i = 0; i < numJogos; i++) {
-                            // ⚠️ O ESCUDO ANTI-CRASH ESTÁ AQUI ⚠️
                             try {
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
@@ -273,29 +273,49 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                     }, i)
                                 ]);
 
-                                // Pausa maior para evitar o "context destroyed"
                                 await new Promise(r => setTimeout(r, 5000));
 
                                 const jogosExtraidos = await page.evaluate((nomeCat, nomeGrupo, nomeZona, tipoTorneio) => {
                                     const details = [];
                                     const validHeaders = Array.from(document.querySelectorAll('th')).map(th => th.innerText.trim()).filter(texto => texto.length > 0);
-                                    const dataIndex = validHeaders.indexOf('Data');
+
+                                    // 1. Procura pela coluna que contenha 'Data'
+                                    const dataIndex = validHeaders.findIndex(texto => texto.toLowerCase().includes('data'));
 
                                     if (dataIndex === -1) return [];
 
                                     const homeTeamRaw = validHeaders[dataIndex + 1];
                                     const awayTeamRaw = validHeaders[dataIndex + 2];
 
-                                    let dataJogoSQL = null;
-                                    const rowsDate = document.querySelectorAll('tr');
-                                    for (const row of rowsDate) {
+                                    let dataCompletaSQL = null;
+                                    let jornadaDetectada = nomeGrupo;
+
+                                    const rows = document.querySelectorAll('tr');
+
+                                    // Extração da Data e Hora Inteligente
+                                    for (const row of rows) {
                                         const tds = row.querySelectorAll('td');
+
+                                        // Detetar Jornada se existir numa linha dedicada
+                                        const rowText = row.innerText.toLowerCase();
+                                        if (rowText.includes('jornada') && tds.length === 1) {
+                                            jornadaDetectada = row.innerText.trim();
+                                        }
+
                                         if (tds.length > dataIndex) {
                                             const rawText = tds[dataIndex].innerText.trim();
-                                            const regexData = /(\d{2})[-/](\d{2})[-/](\d{4})/;
-                                            const match = rawText.match(regexData);
+                                            // Apanha a data e TENTA apanhar a hora (seja 14:30 ou 14h30)
+                                            const regexDataHora = /(\d{2})[-/](\d{2})[-/](\d{4})(?:\s+(\d{2})[:hH](\d{2}))?/;
+                                            const match = rawText.match(regexDataHora);
+
                                             if (match) {
-                                                dataJogoSQL = `${match[3]}-${match[2]}-${match[1]}`;
+                                                const dia = match[1];
+                                                const mes = match[2];
+                                                const ano = match[3];
+                                                const hora = match[4] || "00";
+                                                const minuto = match[5] || "00";
+
+                                                dataCompletaSQL = `${ano}-${mes}-${dia} ${hora}:${minuto}:00`;
                                                 break;
                                             }
                                         }
@@ -303,7 +323,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
                                     const cleanText = (text) => text.replace(/✔/g, '').replace(/\n/g, ' / ').replace(/\s*\/\s*\/\s*/g, ' / ').replace(/\s+/g, ' ').replace(/^[ \/]+|[ \/]+$/g, '').trim();
 
-                                    const rows = document.querySelectorAll('tr');
                                     rows.forEach(row => {
                                         const tds = Array.from(row.querySelectorAll('td'));
                                         const rowTexts = tds.map(td => td.innerText.trim());
@@ -323,10 +342,10 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                                     zona: nomeZona,
                                                     tipo: tipoTorneio,
                                                     categoria: nomeCat,
-                                                    grupo: nomeGrupo,
+                                                    grupo: jornadaDetectada, // Guarda a Jornada e o Grupo juntos se apanhado
                                                     equipa_casa: homeTeamRaw,
                                                     equipa_fora: awayTeamRaw,
-                                                    data_jogo: dataJogoSQL,
+                                                    data_jogo: dataCompletaSQL,
                                                     rubber_number: rubber,
                                                     home_duo: homeDuo,
                                                     away_duo: awayDuo,
@@ -352,8 +371,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                 await new Promise(r => setTimeout(r, 4000));
 
                             } catch (gameError) {
-                                console.error(`   ⚠️ Erro de leitura neste jogo específico. A avançar para o próximo para não parar o script...`);
-                                // Tenta forçar o clique em "Voltar" caso a página tenha ficado bloqueada no jogo
+                                console.error(`   ⚠️ Erro de leitura neste jogo específico. A avançar...`);
                                 await page.evaluate(() => {
                                     const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
                                     if (btn) btn.click();
