@@ -304,7 +304,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                         // --- 3. MAPEAMENTO DOS JOGOS (Lê a tabela antes de clicar!) ---
                         const metadadosJogos = await page.evaluate(() => {
                             const arr = [];
-                            // Este é o seletor exato da Lupa no TiePadel
                             const btns = document.querySelectorAll('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
 
                             btns.forEach((btn) => {
@@ -313,14 +312,13 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                     const tds = Array.from(tr.querySelectorAll('td'));
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
 
-                                    // Achar o separador "-" para descobrir as equipas baseando-nos na imagem que enviaste
                                     const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
                                     if (dashIdx > 0) {
-                                        home = tds[dashIdx - 1].innerText.trim();
-                                        away = tds[dashIdx + 1].innerText.trim();
+                                        // Filtro "Anti-Certos": Remove o ✔ e os espaços!
+                                        home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
+                                        away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
                                     }
 
-                                    // Achar a data (YYYY-MM-DD HH:MM)
                                     const dateRegex = /(\d{4}-\d{2}-\d{2})[,\s]*(\d{2}:\d{2})?/;
                                     for (let td of tds) {
                                         const match = td.innerText.match(dateRegex);
@@ -330,7 +328,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                         }
                                     }
 
-                                    // Só guardamos se tiver detetado equipas
                                     if(home !== "Equipa Casa") {
                                         arr.push({ home, away, dataJogo });
                                     }
@@ -349,7 +346,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                             try {
                                 console.log(`      -> A extrair: ${meta.home} vs ${meta.away}...`);
 
-                                // Clica na Lupa
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                     page.evaluate((index) => {
@@ -360,10 +356,19 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
                                 await new Promise(r => setTimeout(r, 4000));
 
-                                // Lemos os Rubbers, injetando os dados que sacámos antes do clique
+                                // Extrai os Rubbers passando o contexto de fora
                                 const jogosExtraidos = await page.evaluate((metaInfo, nomeCat, nomeGrupo, nomeZona, tipoTorneio) => {
                                     const details = [];
-                                    const cleanText = (text) => text.replace(/✔/g, '').replace(/\n/g, ' / ').replace(/\s*\/\s*\/\s*/g, ' / ').replace(/\s+/g, ' ').trim();
+
+                                    // ✨ NOVA FUNÇÃO DE LIMPEZA BLINDADA ✨
+                                    const cleanText = (text) => text
+                                        .replace(/✔/g, '')
+                                        .replace(/\n/g, ' / ')
+                                        .replace(/\s+/g, ' ')
+                                        .replace(/\s*\/\s*/g, ' / ')
+                                        .replace(/(\s*\/\s*){2,}/g, ' / ')
+                                        .replace(/^[\s/]+|[\s/]+$/g, '')
+                                        .trim();
 
                                     document.querySelectorAll('table tr').forEach(row => {
                                         const tds = Array.from(row.querySelectorAll('td'));
@@ -385,9 +390,9 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                                     tipo: tipoTorneio,
                                                     categoria: nomeCat,
                                                     grupo: nomeGrupo,
-                                                    home_team: metaInfo.home,     // Metadados apanhados na tabela inicial!
-                                                    away_team: metaInfo.away,     // Metadados apanhados na tabela inicial!
-                                                    data_jogo: metaInfo.dataJogo, // Metadados apanhados na tabela inicial!
+                                                    home_team: metaInfo.home,
+                                                    away_team: metaInfo.away,
+                                                    data_jogo: metaInfo.dataJogo,
                                                     rubber_number: rubberNum,
                                                     home_duo: homeDuo,
                                                     away_duo: awayDuo,
