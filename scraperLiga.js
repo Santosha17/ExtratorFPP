@@ -72,7 +72,7 @@ async function registarEquipa(nome, zona, tipo, categoria, grupo) {
     }
 }
 
-// --- FUNÇÃO: GUARDA DIRETAMENTE NO MOMENTO DA EXTRAÇÃO ---
+// --- FUNÇÃO: GUARDA NO SUPABASE (OTIMIZADA PARA ACEITAR JOGOS SEM RUBBERS) ---
 async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     if (!jogosExtraidos || jogosExtraidos.length === 0) return;
 
@@ -80,11 +80,11 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     let finalAwayScore = 0;
     let matchStatus = 'scheduled';
 
+    // 1. Calcular Resultado (Só calcula se existirem rubbers preenchidos)
     for (const j of jogosExtraidos) {
-        if (j.result && j.result.toLowerCase() !== 'tba' && j.result !== '') {
+        if (j.rubber_number && j.result && j.result.toLowerCase() !== 'tba' && j.result !== '') {
             let hSets = 0, aSets = 0;
             const sets = j.result.replace(/[^\d\s\-]/g, ' ').trim().split(/\s+/);
-
             for (let s of sets) {
                 const parts = s.split('-');
                 if (parts.length === 2) {
@@ -105,98 +105,107 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
         matchStatus = 'completed';
     }
 
-    for (const jogo of jogosExtraidos) {
-        try {
-            await registarEquipa(jogo.home_team, jogo.zona, jogo.tipo, jogo.categoria, jogo.grupo);
-            await registarEquipa(jogo.away_team, jogo.zona, jogo.tipo, jogo.categoria, jogo.grupo);
+    // Apanhamos o primeiro objeto (que tem a info base do match)
+    const jogoBase = jogosExtraidos[0];
 
-            let matchId;
+    try {
+        // 2. Garantir que as equipas existem
+        await registarEquipa(jogoBase.home_team, jogoBase.zona, jogoBase.tipo, jogoBase.categoria, jogoBase.grupo);
+        await registarEquipa(jogoBase.away_team, jogoBase.zona, jogoBase.tipo, jogoBase.categoria, jogoBase.grupo);
 
-            const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogo.home_team)}&away_team=eq.${encodeURIComponent(jogo.away_team)}&zona=eq.${encodeURIComponent(jogo.zona)}&tipo=eq.${encodeURIComponent(jogo.tipo)}&categoria=eq.${encodeURIComponent(jogo.categoria)}&select=id,data_jogo,status,home_score,away_score`;
-            const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-            const matchesDb = await resMatch.json();
+        let matchId;
 
-            if (!matchesDb || matchesDb.length === 0) {
-                const payloadMatch = {
-                    epoca: "2026",
-                    fase: "Fase Regular",
-                    zona: jogo.zona,
-                    tipo: jogo.tipo,
-                    categoria: jogo.categoria,
-                    grupo: jogo.grupo,
-                    home_team: jogo.home_team,
-                    away_team: jogo.away_team,
-                    data_jogo: jogo.data_jogo,
-                    status: matchStatus,
-                    home_score: matchStatus === 'completed' ? finalHomeScore : null,
-                    away_score: matchStatus === 'completed' ? finalAwayScore : null
-                };
+        // 3. Procurar / Criar o Match Principal
+        const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogoBase.home_team)}&away_team=eq.${encodeURIComponent(jogoBase.away_team)}&zona=eq.${encodeURIComponent(jogoBase.zona)}&tipo=eq.${encodeURIComponent(jogoBase.tipo)}&categoria=eq.${encodeURIComponent(jogoBase.categoria)}&select=id,data_jogo,status,home_score,away_score`;
+        const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+        const matchesDb = await resMatch.json();
 
-                const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, {
-                    method: 'POST',
+        if (!matchesDb || matchesDb.length === 0) {
+            const payloadMatch = {
+                epoca: "2026",
+                fase: "Fase Regular",
+                zona: jogoBase.zona,
+                tipo: jogoBase.tipo,
+                categoria: jogoBase.categoria,
+                grupo: jogoBase.grupo,
+                home_team: jogoBase.home_team,
+                away_team: jogoBase.away_team,
+                data_jogo: jogoBase.data_jogo,
+                status: matchStatus,
+                home_score: matchStatus === 'completed' ? finalHomeScore : null,
+                away_score: matchStatus === 'completed' ? finalAwayScore : null
+            };
+
+            const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, {
+                method: 'POST',
+                headers: {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                body: JSON.stringify(payloadMatch)
+            });
+
+            const newMatch = await resCreateMatch.json();
+            matchId = newMatch[0].id;
+            console.log(`   🆕 Novo Encontro Criado na BD: ${jogoBase.home_team} vs ${jogoBase.away_team}`);
+        } else {
+            matchId = matchesDb[0].id;
+
+            let updatePayload = {};
+
+            if (jogoBase.data_jogo && matchesDb[0].data_jogo !== jogoBase.data_jogo) {
+                updatePayload.data_jogo = jogoBase.data_jogo;
+            }
+
+            if (matchesDb[0].status !== matchStatus) {
+                updatePayload.status = matchStatus;
+            }
+
+            const dbHomeScore = matchesDb[0].home_score ?? -1;
+            const dbAwayScore = matchesDb[0].away_score ?? -1;
+
+            if (matchStatus === 'completed' && (dbHomeScore !== finalHomeScore || dbAwayScore !== finalAwayScore)) {
+                updatePayload.home_score = finalHomeScore;
+                updatePayload.away_score = finalAwayScore;
+            }
+
+            if (Object.keys(updatePayload).length > 0) {
+                await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, {
+                    method: 'PATCH',
                     headers: {
                         'apikey': SUPABASE_KEY,
                         'Authorization': `Bearer ${SUPABASE_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=representation'
+                        'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify(payloadMatch)
+                    body: JSON.stringify(updatePayload)
                 });
-
-                const newMatch = await resCreateMatch.json();
-                matchId = newMatch[0].id;
-                console.log(`   🆕 Novo Encontro Criado na BD: ${jogo.home_team} vs ${jogo.away_team}`);
-            } else {
-                matchId = matchesDb[0].id;
-
-                let updatePayload = {};
-
-                if (jogo.data_jogo && matchesDb[0].data_jogo !== jogo.data_jogo) {
-                    updatePayload.data_jogo = jogo.data_jogo;
-                }
-
-                if (matchesDb[0].status !== matchStatus) {
-                    updatePayload.status = matchStatus;
-                }
-
-                const dbHomeScore = matchesDb[0].home_score ?? -1;
-                const dbAwayScore = matchesDb[0].away_score ?? -1;
-
-                if (matchStatus === 'completed' && (dbHomeScore !== finalHomeScore || dbAwayScore !== finalAwayScore)) {
-                    updatePayload.home_score = finalHomeScore;
-                    updatePayload.away_score = finalAwayScore;
-                }
-
-                if (Object.keys(updatePayload).length > 0) {
-                    await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, {
-                        method: 'PATCH',
-                        headers: {
-                            'apikey': SUPABASE_KEY,
-                            'Authorization': `Bearer ${SUPABASE_KEY}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(updatePayload)
-                    });
-                }
             }
+        }
 
-            const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${jogo.rubber_number}&select=id,result,home_duo,away_duo`;
+        // 4. Gravar os Rubbers (se existirem!)
+        for (const r of jogosExtraidos) {
+            // Se o jogo não tiver rubber_number, é um jogo "Dummy" só para registar o calendário. Saltamos!
+            if (!r.rubber_number) continue;
+
+            const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id,result,home_duo,away_duo`;
             const resDetail = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
             const detailsDb = await resDetail.json();
 
             const payloadDetail = {
                 match_id: matchId,
-                rubber_number: jogo.rubber_number,
-                home_duo: jogo.home_duo,
-                away_duo: jogo.away_duo,
-                result: jogo.result
+                rubber_number: r.rubber_number,
+                home_duo: r.home_duo,
+                away_duo: r.away_duo,
+                result: r.result
             };
 
             if (detailsDb && detailsDb.length > 0) {
                 const detailId = detailsDb[0].id;
                 const resultAntigo = detailsDb[0].result;
 
-                if (resultAntigo !== jogo.result || detailsDb[0].home_duo !== jogo.home_duo) {
+                if (resultAntigo !== r.result || detailsDb[0].home_duo !== r.home_duo) {
                     await fetch(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
                         method: 'PATCH',
                         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
@@ -210,15 +219,15 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                     body: JSON.stringify(payloadDetail)
                 });
             }
-        } catch (error) {
-            console.error(`   ❌ Falha a guardar na BD o encontro:`, error.message);
         }
+    } catch (error) {
+        console.error(`   ❌ Falha a guardar na BD o encontro:`, error.message);
     }
 }
 
-// --- O MOTOR DO PUPPETEER (ESTRATÉGIA DE POSTBACK) ---
+// --- O MOTOR DO PUPPETEER (CATA-TUDO COM SINCRONIZAÇÃO DE REDE) ---
 (async () => {
-    console.log("🚀 A iniciar a 'Aranha' PadelNetwork - ESTRATÉGIA POSTBACK...");
+    console.log("🚀 A iniciar a 'Aranha' PadelNetwork - ESTRATÉGIA CATA-TUDO (CALENDÁRIO)...");
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -261,7 +270,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                     await page.select('#drop_tournaments', cat.valor);
                     await new Promise(r => setTimeout(r, 4000));
 
-                    // 1. CLICAR NO TAB "ENCONTROS"
                     const clicouEncontros = await page.evaluate(() => {
                         const links = Array.from(document.querySelectorAll('a, span, div'));
                         const encontrosLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
@@ -279,7 +287,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
                     await new Promise(r => setTimeout(r, 4000));
 
-                    // 2. DESCOBRIR OS GRUPOS/JORNADAS
                     const grupos = await page.evaluate(() => {
                         const links = Array.from(document.querySelectorAll('a'));
                         return links.map(l => l.innerText.trim()).filter(text => text.includes("Grupo") || text === "Main");
@@ -293,77 +300,102 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                     for (const grupo of grupos) {
                         console.log(`   🔎 A procurar jogos em: ${grupo}...`);
 
-                        await page.evaluate((nomeGrupo) => {
-                            const links = Array.from(document.querySelectorAll('a'));
-                            const target = links.find(l => l.innerText.trim() === nomeGrupo);
-                            if (target) target.click();
-                        }, grupo);
+                        // 💡 CORREÇÃO 1: Sincronização ao clicar no Grupo
+                        await Promise.all([
+                            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
+                            page.evaluate((nomeGrupo) => {
+                                const links = Array.from(document.querySelectorAll('a'));
+                                const target = links.find(l => l.innerText.trim() === nomeGrupo);
+                                if (target) target.click();
+                            }, grupo)
+                        ]);
 
-                        await new Promise(r => setTimeout(r, 3000));
+                        await new Promise(r => setTimeout(r, 2000));
 
-                        // --- 3. MAPEAMENTO DOS JOGOS (Lê a tabela antes de clicar!) ---
                         const metadadosJogos = await page.evaluate(() => {
                             const arr = [];
-                            // Este é o seletor exato da Lupa no TiePadel
-                            const btns = document.querySelectorAll('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
+                            let indexDoBotao = 0;
 
-                            btns.forEach((btn) => {
-                                const tr = btn.closest('tr');
-                                if (tr) {
-                                    const tds = Array.from(tr.querySelectorAll('td'));
-                                    let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
+                            document.querySelectorAll('table tr').forEach((tr) => {
+                                const tds = Array.from(tr.querySelectorAll('td'));
+                                let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
 
-                                    // Achar o separador "-" para descobrir as equipas baseando-nos na imagem que enviaste
-                                    const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
-                                    if (dashIdx > 0) {
-                                        home = tds[dashIdx - 1].innerText.trim();
-                                        away = tds[dashIdx + 1].innerText.trim();
+                                const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
+                                if (dashIdx > 0) {
+                                    home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
+                                    away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
+                                }
+
+                                const dateRegex = /(\d{4}-\d{2}-\d{2})[,\s]*(\d{2}:\d{2})?/;
+                                for (let td of tds) {
+                                    const match = td.innerText.match(dateRegex);
+                                    if (match) {
+                                        dataJogo = match[2] ? `${match[1]} ${match[2]}:00` : `${match[1]} 00:00:00`;
+                                        break;
+                                    }
+                                }
+
+                                if(home !== "Equipa Casa" && home !== "") {
+                                    const btnLupa = tr.querySelector('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
+                                    let temBotao = false;
+                                    let btnIdxToClick = -1;
+
+                                    if (btnLupa) {
+                                        temBotao = true;
+                                        btnIdxToClick = indexDoBotao;
+                                        indexDoBotao++;
                                     }
 
-                                    // Achar a data (YYYY-MM-DD HH:MM)
-                                    const dateRegex = /(\d{4}-\d{2}-\d{2})[,\s]*(\d{2}:\d{2})?/;
-                                    for (let td of tds) {
-                                        const match = td.innerText.match(dateRegex);
-                                        if (match) {
-                                            dataJogo = match[2] ? `${match[1]} ${match[2]}:00` : `${match[1]} 00:00:00`;
-                                            break;
-                                        }
-                                    }
-
-                                    // Só guardamos se tiver detetado equipas
-                                    if(home !== "Equipa Casa") {
-                                        arr.push({ home, away, dataJogo });
-                                    }
+                                    arr.push({ home, away, dataJogo, temBotao, btnIdxToClick });
                                 }
                             });
                             return arr;
                         });
 
-                        console.log(`      📊 Encontrados ${metadadosJogos.length} encontros com botão.`);
+                        console.log(`      📊 Encontrados ${metadadosJogos.length} encontros no calendário.`);
 
                         if (metadadosJogos.length === 0) continue;
 
-                        // --- 4. O LOOP DO CLIQUE E EXTRAÇÃO ---
                         for (let i = 0; i < metadadosJogos.length; i++) {
                             const meta = metadadosJogos[i];
                             try {
-                                console.log(`      -> A extrair: ${meta.home} vs ${meta.away}...`);
+                                console.log(`      -> A processar: ${meta.home} vs ${meta.away}...`);
 
-                                // Clica na Lupa
+                                if (!meta.temBotao) {
+                                    console.log(`         ⏳ Jogo agendado (Sem detalhes publicados). A gravar...`);
+                                    await guardarNoSupabaseEmTempoReal([{
+                                        zona: torneio.nome,
+                                        tipo: torneio.tipo,
+                                        categoria: cat.nome,
+                                        grupo: grupo,
+                                        home_team: meta.home,
+                                        away_team: meta.away,
+                                        data_jogo: meta.dataJogo
+                                    }]);
+                                    continue;
+                                }
+
+                                // 💡 CORREÇÃO 2: Sincronização ao clicar na Lupa
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
-                                    page.evaluate((index) => {
+                                    page.evaluate((indexToClick) => {
                                         const btns = document.querySelectorAll('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
-                                        if (btns[index]) btns[index].click();
-                                    }, i)
+                                        if (btns[indexToClick]) btns[indexToClick].click();
+                                    }, meta.btnIdxToClick)
                                 ]);
 
-                                await new Promise(r => setTimeout(r, 4000));
+                                await new Promise(r => setTimeout(r, 3000));
 
-                                // Lemos os Rubbers, injetando os dados que sacámos antes do clique
                                 const jogosExtraidos = await page.evaluate((metaInfo, nomeCat, nomeGrupo, nomeZona, tipoTorneio) => {
                                     const details = [];
-                                    const cleanText = (text) => text.replace(/✔/g, '').replace(/\n/g, ' / ').replace(/\s*\/\s*\/\s*/g, ' / ').replace(/\s+/g, ' ').trim();
+                                    const cleanText = (text) => text
+                                        .replace(/✔/g, '')
+                                        .replace(/\n/g, ' / ')
+                                        .replace(/\s+/g, ' ')
+                                        .replace(/\s*\/\s*/g, ' / ')
+                                        .replace(/(\s*\/\s*){2,}/g, ' / ')
+                                        .replace(/^[\s/]+|[\s/]+$/g, '')
+                                        .trim();
 
                                     document.querySelectorAll('table tr').forEach(row => {
                                         const tds = Array.from(row.querySelectorAll('td'));
@@ -385,9 +417,9 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                                     tipo: tipoTorneio,
                                                     categoria: nomeCat,
                                                     grupo: nomeGrupo,
-                                                    home_team: metaInfo.home,     // Metadados apanhados na tabela inicial!
-                                                    away_team: metaInfo.away,     // Metadados apanhados na tabela inicial!
-                                                    data_jogo: metaInfo.dataJogo, // Metadados apanhados na tabela inicial!
+                                                    home_team: metaInfo.home,
+                                                    away_team: metaInfo.away,
+                                                    data_jogo: metaInfo.dataJogo,
                                                     rubber_number: rubberNum,
                                                     home_duo: homeDuo,
                                                     away_duo: awayDuo,
@@ -400,34 +432,47 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                 }, meta, cat.nome, grupo, torneio.nome, torneio.tipo);
 
                                 if (jogosExtraidos.length > 0) {
-                                    console.log(`      ✅ Sucesso! Lidos ${jogosExtraidos.length} rubbers. A guardar...`);
+                                    console.log(`         ✅ Sucesso! Lidos ${jogosExtraidos.length} rubbers. A guardar...`);
                                     await guardarNoSupabaseEmTempoReal(jogosExtraidos);
                                 } else {
-                                    console.log(`      ⚠️ Jogo sem detalhes publicados ou layout diferente.`);
+                                    console.log(`         ⚠️ Jogo sem rubbers publicados. A guardar como agendado...`);
+                                    await guardarNoSupabaseEmTempoReal([{
+                                        zona: torneio.nome,
+                                        tipo: torneio.tipo,
+                                        categoria: cat.nome,
+                                        grupo: grupo,
+                                        home_team: meta.home,
+                                        away_team: meta.away,
+                                        data_jogo: meta.dataJogo
+                                    }]);
                                 }
 
-                                // VOLTAR PARA A LISTA
+                                // 💡 CORREÇÃO 3: Sincronização ao clicar em Voltar
                                 await Promise.all([
-                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
+                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                     page.evaluate(() => {
                                         const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
                                         if (btn) btn.click();
                                     })
                                 ]);
-                                await new Promise(r => setTimeout(r, 4000));
+                                await new Promise(r => setTimeout(r, 2000));
 
                             } catch (gameError) {
-                                console.error(`   ⚠️ Erro de timeout neste jogo. A forçar retorno...`);
-                                await page.evaluate(() => {
-                                    const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
-                                    if (btn) btn.click();
-                                }).catch(() => {});
-                                await new Promise(r => setTimeout(r, 4000));
+                                console.error(`   ⚠️ Erro neste jogo. A forçar retorno de segurança...`);
+                                // Se deu erro, usamos o mesmo mecanismo forte para forçar o Voltar
+                                await Promise.all([
+                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
+                                    page.evaluate(() => {
+                                        const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
+                                        if (btn) btn.click();
+                                    }).catch(() => {})
+                                ]);
+                                await new Promise(r => setTimeout(r, 2000));
                             }
                         }
                     }
                 } catch (catError) {
-                    console.error(`❌ Erro ao processar a categoria:`, catError.message);
+                    console.error(`❌ Erro ao processar a categoria ${cat.nome}:`, catError.message);
                 }
             }
         }
