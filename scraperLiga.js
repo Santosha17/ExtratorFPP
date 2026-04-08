@@ -50,10 +50,10 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
-// --- FILTRO DE EXECUÇÃO (Vindo do GitHub Actions) ---
-const ZONA_ALVO = process.env.SCRAPE_ZONA; // Ex: "Zona 1A"
-const TIPO_ALVO = process.env.SCRAPE_TIPO; // Ex: "Absolutos" ou "Veteranos"
-const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA; // ✨ NOVO: Ex: "Masculinos" ou "Femininos"
+// --- FILTRO DE EXECUÇÃO ---
+const ZONA_ALVO = process.env.SCRAPE_ZONA;
+const TIPO_ALVO = process.env.SCRAPE_TIPO;
+const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA;
 
 const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     const filterTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
@@ -68,7 +68,6 @@ if (torneiosParaCorrer.length === 0) {
 
 const cacheEquipas = new Set();
 
-// --- FUNÇÃO: REGISTAR EQUIPA ---
 async function registarEquipa(nome, zona, tipo, categoria, grupo) {
     const idUnico = `${nome}|${zona}|${tipo}|${categoria}|${grupo}`;
     if (cacheEquipas.has(idUnico)) return;
@@ -86,20 +85,15 @@ async function registarEquipa(nome, zona, tipo, categoria, grupo) {
             body: JSON.stringify(payload)
         });
         cacheEquipas.add(idUnico);
-    } catch (error) {
-        // Falha silenciosa
-    }
+    } catch (error) {}
 }
 
-// --- FUNÇÃO: GUARDA NO SUPABASE (OTIMIZADA PARA ACEITAR JOGOS SEM RUBBERS) ---
 async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     if (!jogosExtraidos || jogosExtraidos.length === 0) return;
 
-    let finalHomeScore = 0;
-    let finalAwayScore = 0;
+    let finalHomeScore = 0, finalAwayScore = 0;
     let matchStatus = 'scheduled';
 
-    // 1. Calcular Resultado (Só calcula se existirem rubbers preenchidos)
     for (const j of jogosExtraidos) {
         if (j.rubber_number && j.result && j.result.toLowerCase() !== 'tba' && j.result !== '') {
             let hSets = 0, aSets = 0;
@@ -107,8 +101,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
             for (let s of sets) {
                 const parts = s.split('-');
                 if (parts.length === 2) {
-                    const h = parseInt(parts[0]);
-                    const a = parseInt(parts[1]);
+                    const h = parseInt(parts[0]), a = parseInt(parts[1]);
                     if (!isNaN(h) && !isNaN(a)) {
                         if (h > a) hSets++;
                         else if (a > h) aSets++;
@@ -120,67 +113,41 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
         }
     }
 
-    if (finalHomeScore > 0 || finalAwayScore > 0) {
-        matchStatus = 'completed';
-    }
+    if (finalHomeScore > 0 || finalAwayScore > 0) matchStatus = 'completed';
 
-    // Apanhamos o primeiro objeto (que tem a info base do match)
     const jogoBase = jogosExtraidos[0];
 
     try {
-        // 2. Garantir que as equipas existem
         await registarEquipa(jogoBase.home_team, jogoBase.zona, jogoBase.tipo, jogoBase.categoria, jogoBase.grupo);
         await registarEquipa(jogoBase.away_team, jogoBase.zona, jogoBase.tipo, jogoBase.categoria, jogoBase.grupo);
 
         let matchId;
-
-        // 3. Procurar / Criar o Match Principal
         const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogoBase.home_team)}&away_team=eq.${encodeURIComponent(jogoBase.away_team)}&zona=eq.${encodeURIComponent(jogoBase.zona)}&tipo=eq.${encodeURIComponent(jogoBase.tipo)}&categoria=eq.${encodeURIComponent(jogoBase.categoria)}&select=id,data_jogo,status,home_score,away_score`;
         const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();
 
         if (!matchesDb || matchesDb.length === 0) {
             const payloadMatch = {
-                epoca: "2026",
-                fase: "Fase Regular",
-                zona: jogoBase.zona,
-                tipo: jogoBase.tipo,
-                categoria: jogoBase.categoria,
-                grupo: jogoBase.grupo,
-                home_team: jogoBase.home_team,
-                away_team: jogoBase.away_team,
-                data_jogo: jogoBase.data_jogo,
-                status: matchStatus,
+                epoca: "2026", fase: "Fase Regular", zona: jogoBase.zona, tipo: jogoBase.tipo,
+                categoria: jogoBase.categoria, grupo: jogoBase.grupo, home_team: jogoBase.home_team,
+                away_team: jogoBase.away_team, data_jogo: jogoBase.data_jogo, status: matchStatus,
                 home_score: matchStatus === 'completed' ? finalHomeScore : null,
                 away_score: matchStatus === 'completed' ? finalAwayScore : null
             };
 
             const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, {
                 method: 'POST',
-                headers: {
-                    'apikey': SUPABASE_KEY,
-                    'Authorization': `Bearer ${SUPABASE_KEY}`,
-                    'Content-Type': 'application/json',
-                    'Prefer': 'return=representation'
-                },
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
                 body: JSON.stringify(payloadMatch)
             });
-
             const newMatch = await resCreateMatch.json();
             matchId = newMatch[0].id;
-            console.log(`   🆕 Novo Encontro Criado na BD: ${jogoBase.home_team} vs ${jogoBase.away_team}`);
+            console.log(`   🆕 Novo Encontro: ${jogoBase.home_team} vs ${jogoBase.away_team}`);
         } else {
             matchId = matchesDb[0].id;
-
             let updatePayload = {};
-
-            if (jogoBase.data_jogo && matchesDb[0].data_jogo !== jogoBase.data_jogo) {
-                updatePayload.data_jogo = jogoBase.data_jogo;
-            }
-
-            if (matchesDb[0].status !== matchStatus) {
-                updatePayload.status = matchStatus;
-            }
+            if (jogoBase.data_jogo && matchesDb[0].data_jogo !== jogoBase.data_jogo) updatePayload.data_jogo = jogoBase.data_jogo;
+            if (matchesDb[0].status !== matchStatus) updatePayload.status = matchStatus;
 
             const dbHomeScore = matchesDb[0].home_score ?? -1;
             const dbAwayScore = matchesDb[0].away_score ?? -1;
@@ -193,38 +160,24 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
             if (Object.keys(updatePayload).length > 0) {
                 await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_KEY,
-                        'Authorization': `Bearer ${SUPABASE_KEY}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(updatePayload)
                 });
             }
         }
 
-        // 4. Gravar os Rubbers (se existirem!)
         for (const r of jogosExtraidos) {
-            // Se o jogo não tiver rubber_number, é um jogo "Dummy" só para registar o calendário. Saltamos!
             if (!r.rubber_number) continue;
 
             const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id,result,home_duo,away_duo`;
             const resDetail = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
             const detailsDb = await resDetail.json();
 
-            const payloadDetail = {
-                match_id: matchId,
-                rubber_number: r.rubber_number,
-                home_duo: r.home_duo,
-                away_duo: r.away_duo,
-                result: r.result
-            };
+            const payloadDetail = { match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result };
 
             if (detailsDb && detailsDb.length > 0) {
                 const detailId = detailsDb[0].id;
-                const resultAntigo = detailsDb[0].result;
-
-                if (resultAntigo !== r.result || detailsDb[0].home_duo !== r.home_duo) {
+                if (detailsDb[0].result !== r.result || detailsDb[0].home_duo !== r.home_duo) {
                     await fetch(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
                         method: 'PATCH',
                         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
@@ -244,7 +197,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     }
 }
 
-// --- O MOTOR DO PUPPETEER (CATA-TUDO COM SINCRONIZAÇÃO DE REDE) ---
 (async () => {
     console.log(`🚀 A iniciar a 'Aranha' PadelNetwork - Filtros Ativos: ${ZONA_ALVO || 'Todas as Zonas'} | ${TIPO_ALVO || 'Todos os Tipos'} | ${CATEGORIA_ALVO || 'Todas as Categorias'}`);
 
@@ -266,7 +218,8 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
             try {
                 await page.goto(torneio.url, { waitUntil: 'networkidle2' });
-                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
+                // Timeout reduzido para 8000
+                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 8000 });
             } catch (e) {
                 console.error(`❌ Erro ao carregar a página da ${torneio.nome}. A saltar...`);
                 continue;
@@ -281,7 +234,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
             });
 
             for (const cat of categorias) {
-                // ✨ AQUI ESTÁ A ADIÇÃO: O script verifica a CATEGORIA_ALVO e salta se não corresponder!
                 if (CATEGORIA_ALVO && !cat.nome.toUpperCase().includes(CATEGORIA_ALVO.toUpperCase())) {
                     continue;
                 }
@@ -290,9 +242,11 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
                 try {
                     await page.goto(torneio.url, { waitUntil: 'networkidle2' });
-                    await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
+                    await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 8000 });
                     await page.select('#drop_tournaments', cat.valor);
-                    await new Promise(r => setTimeout(r, 4000));
+
+                    // Pausa reduzida
+                    await new Promise(r => setTimeout(r, 2000));
 
                     const clicouEncontros = await page.evaluate(() => {
                         const links = Array.from(document.querySelectorAll('a, span, div'));
@@ -309,7 +263,8 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                         continue;
                     }
 
-                    await new Promise(r => setTimeout(r, 4000));
+                    // Pausa reduzida
+                    await new Promise(r => setTimeout(r, 2000));
 
                     const grupos = await page.evaluate(() => {
                         const links = Array.from(document.querySelectorAll('a'));
@@ -325,7 +280,8 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                         console.log(`   🔎 A procurar jogos em: ${grupo}...`);
 
                         await Promise.all([
-                            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
+                            // Timeout de navegação reduzido para 10000
+                            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
                             page.evaluate((nomeGrupo) => {
                                 const links = Array.from(document.querySelectorAll('a'));
                                 const target = links.find(l => l.innerText.trim() === nomeGrupo);
@@ -333,7 +289,8 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                             }, grupo)
                         ]);
 
-                        await new Promise(r => setTimeout(r, 2000));
+                        // Pausa reduzida
+                        await new Promise(r => setTimeout(r, 1000));
 
                         const metadadosJogos = await page.evaluate(() => {
                             const arr = [];
@@ -399,14 +356,15 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                 }
 
                                 await Promise.all([
-                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
+                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
                                     page.evaluate((indexToClick) => {
                                         const btns = document.querySelectorAll('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
                                         if (btns[indexToClick]) btns[indexToClick].click();
                                     }, meta.btnIdxToClick)
                                 ]);
 
-                                await new Promise(r => setTimeout(r, 3000));
+                                // Pausa reduzida
+                                await new Promise(r => setTimeout(r, 1500));
 
                                 const jogosExtraidos = await page.evaluate((metaInfo, nomeCat, nomeGrupo, nomeZona, tipoTorneio) => {
                                     const details = [];
@@ -470,24 +428,25 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                 }
 
                                 await Promise.all([
-                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
+                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
                                     page.evaluate(() => {
                                         const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
                                         if (btn) btn.click();
                                     })
                                 ]);
-                                await new Promise(r => setTimeout(r, 2000));
+                                // Pausa reduzida
+                                await new Promise(r => setTimeout(r, 1000));
 
                             } catch (gameError) {
                                 console.error(`   ⚠️ Erro neste jogo. A forçar retorno de segurança...`);
                                 await Promise.all([
-                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
+                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 8000 }).catch(() => {}),
                                     page.evaluate(() => {
                                         const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
                                         if (btn) btn.click();
                                     }).catch(() => {})
                                 ]);
-                                await new Promise(r => setTimeout(r, 2000));
+                                await new Promise(r => setTimeout(r, 1000));
                             }
                         }
                     }
