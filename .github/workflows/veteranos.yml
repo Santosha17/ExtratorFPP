@@ -11,15 +11,33 @@ on:
 jobs:
   scrape-veteranos:
     runs-on: ubuntu-latest
+    strategy:
+      # Se uma zona falhar, não cancela as outras
+      fail-fast: false
+      matrix:
+        # Dividimos o trabalho por todas as zonas existentes
+        zona: [
+          "Zona 1A", "Zona 1B", "Zona 1C",
+          "Zona 2",
+          "Zona 3A", "Zona 3B", "Zona 3C", "Zona 3D",
+          "Zona 4A", "Zona 4B", "Zona 4C", "Zona 4D",
+          "Zona 5",
+          "Zona 6A", "Zona 6B",
+          "Zona 7A", "Zona 7B",
+          "Zona 8A", "Zona 8B"
+        ]
+
+    name: Veteranos - ${{ matrix.zona }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20' # Recomendado usar a 20 por estabilidade
       - run: npm ci
       - name: Executar Scraper
         env:
           SUPABASE_URL_SN_LIGA: ${{ secrets.SUPABASE_URL_SN_LIGA }}
           SUPABASE_KEY_SN_LIGA: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
           SCRAPE_TIPO: "Veteranos"
+          SCRAPE_ZONA: ${{ matrix.zona }}
         run: node scraperLiga.js
