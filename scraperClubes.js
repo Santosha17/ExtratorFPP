@@ -1,3 +1,4 @@
+require('dotenv').config();
 const puppeteer = require('puppeteer');
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
@@ -5,7 +6,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.error("❌ ERRO: Chaves do Supabase não encontradas! Verifica os Secrets do GitHub.");
+    console.error("❌ ERRO: Chaves do Supabase não encontradas! Verifica os Secrets do GitHub ou o teu ficheiro .env");
     process.exit(1);
 }
 
@@ -53,6 +54,7 @@ const TORNEIOS_LIGA = [
 
 const ZONA_ALVO = process.env.SCRAPE_ZONA;
 const TIPO_ALVO = process.env.SCRAPE_TIPO;
+const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA;
 
 const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     const filterTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
@@ -60,7 +62,7 @@ const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     return filterTipo && filterZona;
 });
 
-// Mantemos um cache em memória para não tentarmos gravar o mesmo clube 50 vezes por segundo
+// Cache em memória para não martelar o Supabase desnecessariamente
 const cacheClubesVerificados = new Set();
 
 async function guardarClubesNoSupabase(clubesExtraidos) {
@@ -86,12 +88,11 @@ async function guardarClubesNoSupabase(clubesExtraidos) {
                         'Authorization': `Bearer ${SUPABASE_KEY}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ nome: nomeClube }) // Guarda apenas o nome
+                    body: JSON.stringify({ nome: nomeClube })
                 });
                 console.log(`   🏠 Novo Clube Adicionado: ${nomeClube}`);
             }
 
-            // Adiciona ao cache para não voltar a verificar este clube na mesma execução
             cacheClubesVerificados.add(nomeClube);
 
         } catch (error) {
@@ -101,7 +102,7 @@ async function guardarClubesNoSupabase(clubesExtraidos) {
 }
 
 (async () => {
-    console.log(`🚀 A iniciar Extrator de Clubes - Filtros Ativos: ${ZONA_ALVO || 'Todas as Zonas'} | ${TIPO_ALVO || 'Todos os Tipos'}`);
+    console.log(`🚀 A iniciar Extrator Pente Fino de Clubes - Filtros: ${ZONA_ALVO || 'Todas as Zonas'} | ${TIPO_ALVO || 'Todos os Tipos'}`);
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -121,71 +122,91 @@ async function guardarClubesNoSupabase(clubesExtraidos) {
 
             try {
                 await page.goto(torneio.url, { waitUntil: 'networkidle2' });
+                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 8000 });
+            } catch (e) {
+                console.error(`❌ Erro ao carregar a página da ${torneio.nome}.`);
+                continue;
+            }
 
-                // Em vez de escolhermos categorias, vamos diretos à aba "EQUIPAS" que lista todas!
-                const clicouEquipas = await page.evaluate(() => {
-                    const links = Array.from(document.querySelectorAll('a, span, div'));
-                    const equipasLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'EQUIPAS');
-                    if (equipasLink) {
-                        equipasLink.click();
-                        return true;
-                    }
-                    return false;
-                });
+            // Lê as categorias todas do dropdown
+            const categorias = await page.evaluate(() => {
+                const select = document.querySelector('#drop_tournaments');
+                if (!select) return [];
+                return Array.from(select.options)
+                    .filter(opt => opt.value !== "0" && opt.innerText.trim() !== "")
+                    .map(opt => ({ valor: opt.value, nome: opt.innerText.trim() }));
+            });
 
-                if (!clicouEquipas) {
-                    console.log("   ⚠️ Aba 'Equipas' não encontrada. A saltar...");
+            for (const cat of categorias) {
+                if (CATEGORIA_ALVO && !cat.nome.toUpperCase().includes(CATEGORIA_ALVO.toUpperCase())) {
                     continue;
                 }
 
-                // Espera que a tabela das equipas carregue
-                await new Promise(r => setTimeout(r, 2000));
-                await page.waitForSelector('table tr', { timeout: 8000 }).catch(() => {});
+                console.log(`\n🎾 A processar Categoria para Clubes: ${cat.nome}`);
 
-                // ✨ EXTRAÇÃO INTELIGENTE (Procura a coluna exata "De")
-                const clubesNestaZona = await page.evaluate(() => {
-                    const clubesSet = new Set();
-                    const table = document.querySelector('table');
+                try {
+                    await page.goto(torneio.url, { waitUntil: 'networkidle2' });
+                    await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 8000 });
+                    await page.select('#drop_tournaments', cat.valor);
+                    await new Promise(r => setTimeout(r, 2000));
 
-                    if (!table) return [];
-
-                    // 1. Descobrir em que índice está a coluna "De"
-                    const headers = Array.from(table.querySelectorAll('th')).map(th => th.innerText.trim().toUpperCase());
-                    const deIndex = headers.indexOf('DE');
-
-                    // Se por algum motivo bizarro a coluna não existir, paramos.
-                    if (deIndex === -1) return [];
-
-                    // 2. Extrair exatamente desse índice
-                    table.querySelectorAll('tr').forEach(tr => {
-                        const tds = tr.querySelectorAll('td');
-
-                        // Garante que é uma linha de dados e que a coluna existe
-                        if (tds.length > deIndex) {
-                            const nomeDoClube = tds[deIndex].innerText.trim();
-
-                            // Ignorar linhas vazias ou traços
-                            if (nomeDoClube && nomeDoClube !== '-' && nomeDoClube !== '') {
-                                clubesSet.add(nomeDoClube);
-                            }
+                    // Clicar na aba Equipas específica desta categoria
+                    const clicouEquipas = await page.evaluate(() => {
+                        const links = Array.from(document.querySelectorAll('a, span, div'));
+                        const equipasLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'EQUIPAS');
+                        if (equipasLink) {
+                            equipasLink.click();
+                            return true;
                         }
+                        return false;
                     });
 
-                    // Retorna um array de clubes únicos encontrados nesta página
-                    return Array.from(clubesSet);
-                });
+                    if (!clicouEquipas) continue;
 
-                console.log(`   🔎 Encontrados ${clubesNestaZona.length} clubes únicos nesta tabela.`);
+                    await new Promise(r => setTimeout(r, 2000));
+                    await page.waitForSelector('table tr', { timeout: 8000 }).catch(() => {});
 
-                // Envia para o Supabase
-                await guardarClubesNoSupabase(clubesNestaZona);
+                    // ✨ EXTRAÇÃO INTELIGENTE DA COLUNA "DE" (Mesmo que seja só 1)
+                    const clubesNestaCategoria = await page.evaluate(() => {
+                        const clubesSet = new Set();
+                        const table = document.querySelector('table');
 
-            } catch (e) {
-                console.error(`❌ Erro ao ler a página da ${torneio.nome}:`, e.message);
+                        if (!table) return [];
+
+                        // 1. Descobre a coluna "De"
+                        const headers = Array.from(table.querySelectorAll('th')).map(th => th.innerText.trim().toUpperCase());
+                        const deIndex = headers.indexOf('DE');
+
+                        if (deIndex === -1) return [];
+
+                        // 2. Extrai linha a linha
+                        table.querySelectorAll('tr').forEach(tr => {
+                            const tds = tr.querySelectorAll('td');
+
+                            if (tds.length > deIndex) {
+                                const nomeDoClube = tds[deIndex].innerText.trim();
+
+                                if (nomeDoClube && nomeDoClube !== '-' && nomeDoClube !== '') {
+                                    clubesSet.add(nomeDoClube);
+                                }
+                            }
+                        });
+
+                        return Array.from(clubesSet);
+                    });
+
+                    console.log(`   🔎 Encontrados ${clubesNestaCategoria.length} clubes nesta categoria.`);
+
+                    // Envia para a base de dados
+                    await guardarClubesNoSupabase(clubesNestaCategoria);
+
+                } catch (e) {
+                    console.error(`   ❌ Erro ao ler a categoria ${cat.nome}:`, e.message);
+                }
             }
         }
 
-        console.log(`\n🎉 Processo de Extração de Clubes Finalizado com Sucesso!`);
+        console.log(`\n🎉 Processo de Extração Pente Fino de Clubes Finalizado com Sucesso!`);
 
     } catch (err) {
         console.error("❌ Erro catastrófico no motor principal:", err);

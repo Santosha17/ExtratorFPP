@@ -1,3 +1,4 @@
 node_modules/
 .idea/
 todos_os_jogos_scraper.json
+.env
