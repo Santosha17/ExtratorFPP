@@ -28,7 +28,7 @@ jobs:
           "Zona 8A", "Zona 8B"
         ]
 
-    name: Veteranos - ${{ matrix.zona }}
+    name: Vet - ${{ matrix.zona }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,7 +44,7 @@ jobs:
         run: node scraperLiga.js
 
   # ----------------------------------------------------
-  # JOB 2: ESPECIAL ZONA 5 (Dividido M / F)
+  # JOB 2: ESPECIAL ZONA 5 (Ataque Cirúrgico por Grupos)
   # ----------------------------------------------------
   scrape-veteranos-zona-5:
     runs-on: ubuntu-latest
@@ -53,8 +53,10 @@ jobs:
       matrix:
         # Multiplicamos a máquina pelos dois géneros
         categoria: ["Masculinos", "Femininos"]
+        # E multiplicamos pelos grupos!
+        grupo: ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E", "Grupo F", "Main"]
 
-    name: Veteranos - Zona 5 (${{ matrix.categoria }})
+    name: Vet - Zona 5 (${{ matrix.categoria }} - ${{ matrix.grupo }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,4 +70,5 @@ jobs:
           SCRAPE_TIPO: "Veteranos"
           SCRAPE_ZONA: "Zona 5"
           SCRAPE_CATEGORIA: ${{ matrix.categoria }}
+          SCRAPE_GRUPO: ${{ matrix.grupo }}
         run: node scraperLiga.js
