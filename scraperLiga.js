@@ -54,6 +54,7 @@ const TORNEIOS_LIGA = [
 const ZONA_ALVO = process.env.SCRAPE_ZONA;
 const TIPO_ALVO = process.env.SCRAPE_TIPO;
 const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA;
+const GRUPO_ALVO = process.env.SCRAPE_GRUPO; // ✨ NOVO FILTRO DE GRUPO ADICIONADO
 
 const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     const filterTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
@@ -202,7 +203,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 }
 
 (async () => {
-    console.log(`🚀 A iniciar a 'Aranha' PadelNetwork - Filtros: ${ZONA_ALVO || 'Todas'} | ${TIPO_ALVO || 'Todos'}`);
+    console.log(`🚀 A iniciar a 'Aranha' PadelNetwork - Filtros: ${ZONA_ALVO || 'Todas'} | ${TIPO_ALVO || 'Todos'} | ${CATEGORIA_ALVO || 'Todas'} | ${GRUPO_ALVO || 'Todos'}`);
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -258,6 +259,14 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                     });
 
                     for (const grupo of grupos) {
+
+                        // ✨ A MAGIA ACONTECE AQUI: O filtro de Grupo!
+                        if (GRUPO_ALVO && !grupo.toUpperCase().includes(GRUPO_ALVO.toUpperCase())) {
+                            continue;
+                        }
+
+                        console.log(`   🔎 A procurar jogos em: ${grupo}...`);
+
                         await Promise.all([
                             page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
                             page.evaluate((nomeGrupo) => {
