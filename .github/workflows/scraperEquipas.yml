@@ -1,4 +1,4 @@
-name: ScraperClubes
+name: ScraperEquipas
 
 on:
   schedule:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  scrape-clubes:
+  scrape-eqquipas:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,8 +24,8 @@ jobs:
       - name: 📦 Instalar Dependências
         run: npm ci
 
-      - name: 🏠 Executar Extrator de Clubes
+      - name: 🏠 Executar Extrator de Equipas
         env:
           SUPABASE_URL_SN_LIGA: ${{ secrets.SUPABASE_URL_SN_LIGA }}
           SUPABASE_KEY_SN_LIGA: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
-        run: node scraperClubes.js
+        run: node scraperEquipas.js
