@@ -31,4 +31,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL_SN_LIGA }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
-        run: node aranha.js
+        run: node scraperLiga.js
