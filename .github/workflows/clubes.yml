@@ -1,0 +1,31 @@
+name: ScraperLiga - Clubes
+
+on:
+  schedule:
+    # Corre todas as Segundas-feiras às 04:00 UTC (05:00 em Portugal)
+    - cron: '0 4 * * 1'
+
+  # Este comando é muito importante para poderes correr AGORA MESMO!
+  workflow_dispatch:
+
+jobs:
+  scrape-clubes:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Clonar o código
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Instalar Dependências
+        run: npm ci
+
+      - name: 🏠 Executar Extrator de Clubes
+        env:
+          SUPABASE_URL_SN_LIGA: ${{ secrets.SUPABASE_URL_SN_LIGA }}
+          SUPABASE_KEY_SN_LIGA: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
+        run: node scraperClubes.js
