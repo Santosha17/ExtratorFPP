@@ -1,0 +1,69 @@
+name: ScraperLiga - Absolutos (Por Zona, M e F)
+
+on:
+  schedule:
+    # Sextas, Sabados, Domingos e Segundas às 09:00 (8:00 UTC)
+    - cron: '0 8 * * 0,1,5,6'
+    # Sextas, Sabados e Domingos às 18:00 (17:00 UTC)
+    - cron: '0 17 * * 0,5,6'
+  workflow_dispatch:
+
+jobs:
+  # ----------------------------------------------------
+  # JOB 1: ZONAS NORMAIS (Tudo junto)
+  # ----------------------------------------------------
+  scrape-geral:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Retiradas as zonas pesadas daqui!
+        zona: [
+          "Zona 1A", "Zona 1B", "Zona 1C",
+          "Zona 3A", "Zona 3B", "Zona 3C",
+          "Zona 4A", "Zona 4B", "Zona 4C", "Zona 4D",
+          "Zona 6B", "Zona 7A", "Zona 8A", "Zona 8B"
+        ]
+
+    name: Absolutos - ${{ matrix.zona }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Executar Scraper
+        env:
+          SUPABASE_URL_SN_LIGA: ${{ secrets.SUPABASE_URL_SN_LIGA }}
+          SUPABASE_KEY_SN_LIGA: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
+          SCRAPE_TIPO: "Absolutos"
+          SCRAPE_ZONA: ${{ matrix.zona }}
+        run: node scraperLiga.js
+
+  # ----------------------------------------------------
+  # JOB 2: ZONAS PESADAS (Divididas por Masculinos e Femininos)
+  # ----------------------------------------------------
+  scrape-zonas-pesadas:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Colocamos aqui todas as zonas difíceis
+        zona: ["Zona 2", "Zona 3D", "Zona 5", "Zona 6A", "Zona 7B"]
+        # E multiplicamos pelos dois géneros!
+        categoria: ["Masculinos", "Femininos"]
+
+    name: Absolutos - ${{ matrix.zona }} (${{ matrix.categoria }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Executar Scraper
+        env:
+          SUPABASE_URL_SN_LIGA: ${{ secrets.SUPABASE_URL_SN_LIGA }}
+          SUPABASE_KEY_SN_LIGA: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
+          SCRAPE_TIPO: "Absolutos"
+          SCRAPE_ZONA: ${{ matrix.zona }}
+          SCRAPE_CATEGORIA: ${{ matrix.categoria }}
+        # Corrigido o erro do duplo "node"
+        run: node scraperLiga.js

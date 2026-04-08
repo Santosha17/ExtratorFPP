@@ -1,9 +1,13 @@
 const puppeteer = require('puppeteer');
-const fs = require('fs');
 
-// --- CONFIGURAÇÕES DO SUPABASE ---
-const SUPABASE_URL = process.env.SUPABASE_URl_SN_LIGA;
+// --- CONFIGURAÇÕES DO SUPABASE (Protegidas pelo GitHub Secrets) ---
+const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.error("❌ ERRO: Chaves do Supabase não encontradas! Verifica os Secrets do GitHub.");
+    process.exit(1);
+}
 
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
@@ -45,6 +49,22 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona8B/Draws" },
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
+
+// --- FILTRO DE EXECUÇÃO (Vindo do GitHub Actions) ---
+const ZONA_ALVO = process.env.SCRAPE_ZONA; // Ex: "Zona 1A"
+const TIPO_ALVO = process.env.SCRAPE_TIPO; // Ex: "Absolutos" ou "Veteranos"
+const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA; // ✨ NOVO: Ex: "Masculinos" ou "Femininos"
+
+const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
+    const filterTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
+    const filterZona = ZONA_ALVO ? t.nome === ZONA_ALVO : true;
+    return filterTipo && filterZona;
+});
+
+if (torneiosParaCorrer.length === 0) {
+    console.log("⚠️ Nenhum torneio encontrado para os filtros:", { ZONA_ALVO, TIPO_ALVO });
+    process.exit(0);
+}
 
 const cacheEquipas = new Set();
 
@@ -226,7 +246,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
 // --- O MOTOR DO PUPPETEER (CATA-TUDO COM SINCRONIZAÇÃO DE REDE) ---
 (async () => {
-    console.log("🚀 A iniciar a 'Aranha' PadelNetwork - ESTRATÉGIA CATA-TUDO (CALENDÁRIO)...");
+    console.log(`🚀 A iniciar a 'Aranha' PadelNetwork - Filtros Ativos: ${ZONA_ALVO || 'Todas as Zonas'} | ${TIPO_ALVO || 'Todos os Tipos'} | ${CATEGORIA_ALVO || 'Todas as Categorias'}`);
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -239,7 +259,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
     try {
-        for (const torneio of TORNEIOS_LIGA) {
+        for (const torneio of torneiosParaCorrer) {
             console.log(`\n==================================================`);
             console.log(`🌍 A INICIAR EXTRAÇÃO: ${torneio.nome} | ${torneio.tipo}`);
             console.log(`==================================================`);
@@ -261,6 +281,11 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
             });
 
             for (const cat of categorias) {
+                // ✨ AQUI ESTÁ A ADIÇÃO: O script verifica a CATEGORIA_ALVO e salta se não corresponder!
+                if (CATEGORIA_ALVO && !cat.nome.toUpperCase().includes(CATEGORIA_ALVO.toUpperCase())) {
+                    continue;
+                }
+
                 console.log(`\n🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
 
                 try {
@@ -299,7 +324,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                     for (const grupo of grupos) {
                         console.log(`   🔎 A procurar jogos em: ${grupo}...`);
 
-                        // 💡 CORREÇÃO 1: Sincronização ao clicar no Grupo
                         await Promise.all([
                             page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                             page.evaluate((nomeGrupo) => {
@@ -374,7 +398,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                     continue;
                                 }
 
-                                // 💡 CORREÇÃO 2: Sincronização ao clicar na Lupa
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                     page.evaluate((indexToClick) => {
@@ -446,7 +469,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                                     }]);
                                 }
 
-                                // 💡 CORREÇÃO 3: Sincronização ao clicar em Voltar
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                     page.evaluate(() => {
@@ -458,7 +480,6 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
 
                             } catch (gameError) {
                                 console.error(`   ⚠️ Erro neste jogo. A forçar retorno de segurança...`);
-                                // Se deu erro, usamos o mesmo mecanismo forte para forçar o Voltar
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
                                     page.evaluate(() => {
@@ -475,7 +496,7 @@ async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
                 }
             }
         }
-        console.log(`\n🎉 Processo Total Finalizado com Sucesso em Todo o País!`);
+        console.log(`\n🎉 Processo Total Finalizado com Sucesso!`);
 
     } catch (err) {
         console.error("❌ Erro catastrófico no motor principal:", err);

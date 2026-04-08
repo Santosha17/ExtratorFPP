@@ -1,4 +1,25 @@
-name: veteranos.yml
+name: ScraperLiga - Veteranos (Todas as Zonas M F)
+
 on:
+  schedule:
+    # Sextas, Sábados, Domingos e Segundas às 09:00 (8:00 UTC)
+    - cron: '0 8 * * 0,1,5,6'
+    # Sextas, Sábados e Domingos às 18:00 (17:00 UTC)
+    - cron: '0 17 * * 0,5,6'
+  workflow_dispatch:
 
 jobs:
+  scrape-veteranos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Executar Scraper
+        env:
+          SUPABASE_URL_SN_LIGA: ${{ secrets.SUPABASE_URL_SN_LIGA }}
+          SUPABASE_KEY_SN_LIGA: ${{ secrets.SUPABASE_KEY_SN_LIGA }}
+          SCRAPE_TIPO: "Veteranos"
+        run: node scraperLiga.js
