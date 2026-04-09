@@ -62,22 +62,6 @@ const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     return fTipo && fZona;
 });
 
-const cacheEquipas = new Set();
-
-async function registarEquipa(nome, zona, tipo, categoria, grupo) {
-    if (!nome || nome === "") return;
-    const idUnico = `${nome}|${zona}|${tipo}|${categoria}|${grupo}`;
-    if (cacheEquipas.has(idUnico)) return;
-    try {
-        await fetch(`${SUPABASE_URL}/rest/v1/equipas`, {
-            method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=ignore-duplicates' },
-            body: JSON.stringify({ nome, zona, tipo, categoria, grupo })
-        });
-        cacheEquipas.add(idUnico);
-    } catch (e) {}
-}
-
 async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     if (!jogosExtraidos || jogosExtraidos.length === 0) return;
 
