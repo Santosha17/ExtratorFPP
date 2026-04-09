@@ -6,7 +6,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.error("❌ ERRO: Chaves do Supabase não encontradas! Verifica os Secrets do GitHub ou o ficheiro .env");
+    console.error("❌ ERRO: Chaves do Supabase não encontradas!");
     process.exit(1);
 }
 
@@ -53,7 +53,6 @@ const TORNEIOS_LIGA = [
 
 const ZONA_ALVO = process.env.SCRAPE_ZONA;
 const TIPO_ALVO = process.env.SCRAPE_TIPO;
-const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA;
 
 const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     const filterTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
@@ -61,19 +60,24 @@ const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
     return filterTipo && filterZona;
 });
 
-// Memória para guardar os IDs dos Clubes que já existem no Supabase
+function normalizarNome(nome) {
+    if (!nome) return "";
+    return nome.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+}
+
 const mapaClubes = {};
 
-// Função para fazer download dos Clubes
 async function carregarClubesDoSupabase() {
-    console.log("📥 A carregar lista de Clubes do Supabase para cruzamento de dados...");
+    console.log("📥 A carregar lista de Clubes do Supabase...");
     try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/clubes?select=id,nome`, {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
         });
         const clubes = await res.json();
         if (clubes && clubes.length > 0) {
-            clubes.forEach(c => { mapaClubes[c.nome] = c.id; });
+            clubes.forEach(c => { mapaClubes[normalizarNome(c.nome)] = c.id; });
         }
         console.log(`✅ ${Object.keys(mapaClubes).length} clubes memorizados!`);
     } catch (e) {
@@ -86,10 +90,38 @@ async function guardarEquipasCompletasNoSupabase(equipasExtraidas) {
 
     for (const eq of equipasExtraidas) {
         try {
-            // Descobre o UUID do clube
             let idDoClube = null;
-            if (eq.clube_nome_temporario && mapaClubes[eq.clube_nome_temporario]) {
-                idDoClube = mapaClubes[eq.clube_nome_temporario];
+            let clubeTextoSite = eq.clube_nome_temporario ? eq.clube_nome_temporario.trim() : null;
+
+            if (clubeTextoSite) {
+                const nomeNorm = normalizarNome(clubeTextoSite);
+
+                if (mapaClubes[nomeNorm]) {
+                    idDoClube = mapaClubes[nomeNorm];
+                } else {
+                    // GOD MODE: AUTO-CRIAR CLUBE SE NÃO EXISTIR
+                    try {
+                        const resInsert = await fetch(`${SUPABASE_URL}/rest/v1/clubes`, {
+                            method: 'POST',
+                            headers: {
+                                'apikey': SUPABASE_KEY,
+                                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=representation'
+                            },
+                            body: JSON.stringify({ nome: clubeTextoSite })
+                        });
+
+                        const novoClubeDb = await resInsert.json();
+                        if (novoClubeDb && novoClubeDb.length > 0) {
+                            idDoClube = novoClubeDb[0].id;
+                            mapaClubes[nomeNorm] = idDoClube;
+                            console.log(`   🏠 CLUBE AUTO-CRIADO: [${clubeTextoSite}]`);
+                        }
+                    } catch (errClube) {
+                        console.error(`   ❌ Erro ao auto-criar o clube: ${clubeTextoSite}`);
+                    }
+                }
             }
 
             const payloadFinal = {
@@ -111,7 +143,10 @@ async function guardarEquipasCompletasNoSupabase(equipasExtraidas) {
                 },
                 body: JSON.stringify(payloadFinal)
             });
-            console.log(`   ✅ Equipa: ${eq.nome} (${eq.categoria}) | Clube ID: ${idDoClube ? 'Linkado 🔗' : 'Nulo ⚠️'}`);
+
+            const infoClube = idDoClube ? `Linkado 🔗 (${clubeTextoSite})` : (clubeTextoSite ? `Falha Crítica ⚠️ (${clubeTextoSite})` : 'Nulo (Vazio no site) ⚠️');
+            console.log(`   ✅ Equipa: ${eq.nome} (${eq.categoria} - ${eq.grupo}) | Clube: ${infoClube}`);
+
         } catch (error) {
             console.error(`   ❌ Falha ao gravar a equipa ${eq.nome}:`, error.message);
         }
@@ -119,7 +154,7 @@ async function guardarEquipasCompletasNoSupabase(equipasExtraidas) {
 }
 
 (async () => {
-    console.log(`🚀 A iniciar Extrator ARRASTÃO de Equipas - Filtros: ${ZONA_ALVO || 'Todas'} | ${TIPO_ALVO || 'Todos'}`);
+    console.log(`🚀 A iniciar Extrator GLOBAL DE EQUIPAS (Filtro Duplicados Corrigido) - Filtros: ${ZONA_ALVO || 'Todas'} | ${TIPO_ALVO || 'Todos'}`);
 
     await carregarClubesDoSupabase();
 
@@ -140,10 +175,8 @@ async function guardarEquipasCompletasNoSupabase(equipasExtraidas) {
             console.log(`==================================================`);
 
             try {
-                // Vai direto ao URL raiz do torneio
                 await page.goto(torneio.url, { waitUntil: 'networkidle2' });
 
-                // Clica logo na aba "EQUIPAS" GERAL sem abrir categorias
                 const clicouEquipas = await page.evaluate(() => {
                     const links = Array.from(document.querySelectorAll('a, span, div'));
                     const equipasLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'EQUIPAS');
@@ -155,88 +188,114 @@ async function guardarEquipasCompletasNoSupabase(equipasExtraidas) {
                 });
 
                 if (!clicouEquipas) {
-                    console.log("   ⚠️ Aba 'Equipas' não encontrada. A saltar...");
+                    console.log("   ⚠️ Aba 'Equipas' não encontrada na Zona.");
                     continue;
                 }
 
-                await new Promise(r => setTimeout(r, 2500));
+                await new Promise(r => setTimeout(r, 3000));
                 await page.waitForSelector('table tr', { timeout: 8000 }).catch(() => {});
 
-                // ✨ EXTRAÇÃO DA TABELA GERAL
-                const equipasNaAbaGeral = await page.evaluate((zona, tipo, catAlvo) => {
-                    const resultados = [];
-                    const setAntiDuplicados = new Set();
-                    const table = document.querySelector('table');
+                let totalDePaginas = await page.evaluate(() => {
+                    const match = document.body.innerText.match(/items in (\d+) pages/i);
+                    return match ? parseInt(match[1], 10) : 1;
+                });
 
-                    if (!table) return [];
+                let equipasExtraidasZona = 0;
 
-                    const headers = Array.from(table.querySelectorAll('th')).map(th => th.innerText.trim().toUpperCase());
-                    const seccaoIdx = headers.indexOf('SECÇÃO') !== -1 ? headers.indexOf('SECÇÃO') : 0;
-                    const equipaIdx = headers.indexOf('EQUIPA') !== -1 ? headers.indexOf('EQUIPA') : 1;
-                    const deIdx = headers.indexOf('DE');
+                for (let paginaAtual = 1; paginaAtual <= totalDePaginas; paginaAtual++) {
+                    console.log(`   📄 A ler Página ${paginaAtual} de ${totalDePaginas} da ${torneio.nome}...`);
 
-                    table.querySelectorAll('tr').forEach(tr => {
-                        const tds = tr.querySelectorAll('td');
+                    const equipasNestaPagina = await page.evaluate((zona, tipo) => {
+                        const resultados = [];
+                        const setAntiDuplicados = new Set();
+                        const tables = document.querySelectorAll('table');
 
-                        if (tds.length > Math.max(equipaIdx, seccaoIdx)) {
-                            const nomeDaEquipa = tds[equipaIdx].innerText.trim();
+                        tables.forEach(table => {
+                            const rows = table.querySelectorAll('tbody tr');
+                            const headers = Array.from(table.querySelectorAll('th'));
 
-                            // Extrair o Clube
-                            let cNome = deIdx !== -1 && tds.length > deIdx ? tds[deIdx].innerText.trim() : null;
-                            if (cNome === '-') cNome = null;
+                            if (headers.length === 0) return;
 
-                            // A Mágica de Separar Secção -> Categoria e Grupo
-                            let rawSec = tds[seccaoIdx].innerText.trim();
-                            let categoriaFinal = rawSec;
-                            let grupoFinal = "Main";
+                            let seccaoIdx = 0, equipaIdx = 1, deIdx = 2;
 
-                            // Se a secção disser algo como "Femininos 2 - Grupo A"
-                            if (rawSec.includes('Grupo') || rawSec.includes('-')) {
-                                const parts = rawSec.split('-');
-                                if (parts.length > 1) {
-                                    categoriaFinal = parts[0].trim();
-                                    grupoFinal = parts[1].trim();
-                                    if (!grupoFinal.toLowerCase().includes('grupo')) {
-                                        grupoFinal = "Grupo " + grupoFinal;
+                            headers.forEach((th, index) => {
+                                const txt = th.innerText.trim().toUpperCase();
+                                if (txt.includes('SEC')) seccaoIdx = index;
+                                if (txt.includes('EQUIPA')) equipaIdx = index;
+                                if (txt === 'DE' || txt.startsWith('DE\n') || txt.startsWith('DE ')) deIdx = index;
+                            });
+
+                            rows.forEach(tr => {
+                                const tds = tr.querySelectorAll('td');
+
+                                if (tds.length <= Math.max(equipaIdx, deIdx)) return;
+
+                                const nomeDaEquipa = tds[equipaIdx].innerText.trim();
+
+                                let cNome = tds[deIdx].innerText.trim();
+                                if (cNome === '-' || cNome === '') cNome = null;
+
+                                let rawSec = tds[seccaoIdx] ? tds[seccaoIdx].innerText.trim() : "Desconhecida";
+                                let categoriaFinal = rawSec;
+                                let grupoFinal = "Main";
+
+                                if (rawSec) {
+                                    if (rawSec.includes('-')) {
+                                        const parts = rawSec.split('-');
+                                        categoriaFinal = parts[0].trim();
+                                        grupoFinal = parts[1].trim();
+                                        if (!grupoFinal.toLowerCase().includes('grupo')) grupoFinal = "Grupo " + grupoFinal;
+                                    } else if (rawSec.toLowerCase().includes('grupo')) {
+                                        const match = rawSec.match(/(.*)\s+(Grupo.*)/i);
+                                        if (match) {
+                                            categoriaFinal = match[1].trim();
+                                            grupoFinal = match[2].trim();
+                                        }
                                     }
                                 }
-                            }
 
-                            // Filtro de Categoria do .env (Se aplicável)
-                            if (catAlvo && !categoriaFinal.toUpperCase().includes(catAlvo.toUpperCase())) {
-                                return; // Salta esta linha
-                            }
+                                if (nomeDaEquipa && nomeDaEquipa !== '-' && nomeDaEquipa.toUpperCase() !== 'EQUIPA') {
+                                    // ✨ MAGIA DA CORREÇÃO: Agora o Set valida Equipa + Categoria + Grupo
+                                    const chave = `${nomeDaEquipa}|${categoriaFinal}|${grupoFinal}`;
 
-                            if (nomeDaEquipa && nomeDaEquipa !== '-' && nomeDaEquipa.toUpperCase() !== 'EQUIPA') {
-                                const chave = `${nomeDaEquipa}|${categoriaFinal}|${grupoFinal}`;
-
-                                if (!setAntiDuplicados.has(chave)) {
-                                    setAntiDuplicados.add(chave);
-                                    resultados.push({
-                                        nome: nomeDaEquipa,
-                                        zona: zona,
-                                        tipo: tipo,
-                                        categoria: categoriaFinal,
-                                        grupo: grupoFinal,
-                                        clube_nome_temporario: cNome
-                                    });
+                                    if (!setAntiDuplicados.has(chave)) {
+                                        setAntiDuplicados.add(chave);
+                                        resultados.push({
+                                            nome: nomeDaEquipa,
+                                            zona: zona,
+                                            tipo: tipo,
+                                            categoria: categoriaFinal,
+                                            grupo: grupoFinal,
+                                            clube_nome_temporario: cNome
+                                        });
+                                    }
                                 }
-                            }
-                        }
-                    });
+                            });
+                        });
 
-                    return resultados;
-                }, torneio.nome, torneio.tipo, CATEGORIA_ALVO);
+                        return resultados;
+                    }, torneio.nome, torneio.tipo);
 
-                console.log(`   🔎 Encontradas ${equipasNaAbaGeral.length} equipas no total. A guardar e a linkar...`);
-                await guardarEquipasCompletasNoSupabase(equipasNaAbaGeral);
+                    equipasExtraidasZona += equipasNestaPagina.length;
+                    await guardarEquipasCompletasNoSupabase(equipasNestaPagina);
+
+                    if (paginaAtual < totalDePaginas) {
+                        await page.evaluate(() => {
+                            const btnNext = document.querySelector('input.rgPageNext, input[title="Next Page"]');
+                            if (btnNext) btnNext.click();
+                        });
+                        await new Promise(r => setTimeout(r, 3500));
+                    }
+                }
+
+                console.log(`   🔎 Fim da ${torneio.nome}. Foram extraídas ${equipasExtraidasZona} equipas no total desta zona.`);
 
             } catch (e) {
-                console.error(`   ❌ Erro ao ler a Zona:`, e.message);
+                console.error(`   ❌ Erro na zona ${torneio.nome}:`, e.message);
             }
         }
 
-        console.log(`\n🎉 Processo ARRASTÃO Finalizado com Sucesso!`);
+        console.log(`\n🎉 Processo Finalizado! TODAS as Equipas e Clubes estão sintonizados sem crashar!`);
 
     } catch (err) {
         console.error("❌ Erro catastrófico no motor principal:", err);
