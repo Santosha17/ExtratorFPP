@@ -1,3 +1,4 @@
+require('dotenv').config();
 const puppeteer = require('puppeteer');
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
@@ -50,339 +51,367 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
-// --- FILTRO DE EXECUÇÃO ---
 const ZONA_ALVO = process.env.SCRAPE_ZONA;
 const TIPO_ALVO = process.env.SCRAPE_TIPO;
 const CATEGORIA_ALVO = process.env.SCRAPE_CATEGORIA;
-const GRUPO_ALVO = process.env.SCRAPE_GRUPO; // ✨ NOVO FILTRO DE GRUPO ADICIONADO
+const GRUPO_ALVO = process.env.SCRAPE_GRUPO;
 
 const torneiosParaCorrer = TORNEIOS_LIGA.filter(t => {
-    const filterTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
-    const filterZona = ZONA_ALVO ? t.nome === ZONA_ALVO : true;
-    return filterTipo && filterZona;
+    const fTipo = TIPO_ALVO ? t.tipo === TIPO_ALVO : true;
+    const fZona = ZONA_ALVO ? t.nome === ZONA_ALVO : true;
+    return fTipo && fZona;
 });
-
-if (torneiosParaCorrer.length === 0) {
-    console.log("⚠️ Nenhum torneio encontrado para os filtros:", { ZONA_ALVO, TIPO_ALVO });
-    process.exit(0);
-}
 
 const cacheEquipas = new Set();
 
 async function registarEquipa(nome, zona, tipo, categoria, grupo) {
+    if (!nome || nome === "") return;
     const idUnico = `${nome}|${zona}|${tipo}|${categoria}|${grupo}`;
     if (cacheEquipas.has(idUnico)) return;
-
-    const payload = { nome, zona, tipo, categoria, grupo };
     try {
         await fetch(`${SUPABASE_URL}/rest/v1/equipas`, {
             method: 'POST',
-            headers: {
-                'apikey': SUPABASE_KEY,
-                'Authorization': `Bearer ${SUPABASE_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'resolution=ignore-duplicates'
-            },
-            body: JSON.stringify(payload)
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=ignore-duplicates' },
+            body: JSON.stringify({ nome, zona, tipo, categoria, grupo })
         });
         cacheEquipas.add(idUnico);
-    } catch (error) {}
+    } catch (e) {}
 }
 
 async function guardarNoSupabaseEmTempoReal(jogosExtraidos) {
     if (!jogosExtraidos || jogosExtraidos.length === 0) return;
 
-    let finalHomeScore = 0, finalAwayScore = 0;
+    let finalHomeScore = 0;
+    let finalAwayScore = 0;
     let matchStatus = 'scheduled';
-
-    for (const j of jogosExtraidos) {
-        if (j.rubber_number && j.result && j.result.toLowerCase() !== 'tba' && j.result !== '') {
-            let hSets = 0, aSets = 0;
-            const sets = j.result.replace(/[^\d\s\-]/g, ' ').trim().split(/\s+/);
-            for (let s of sets) {
-                const parts = s.split('-');
-                if (parts.length === 2) {
-                    const h = parseInt(parts[0]), a = parseInt(parts[1]);
-                    if (!isNaN(h) && !isNaN(a)) {
-                        if (h > a) hSets++;
-                        else if (a > h) aSets++;
-                    }
-                }
-            }
-            if (hSets > aSets) finalHomeScore++;
-            else if (aSets > hSets) finalAwayScore++;
-        }
-    }
-
-    if (finalHomeScore > 0 || finalAwayScore > 0) matchStatus = 'completed';
 
     const jogoBase = jogosExtraidos[0];
 
-    // ✨ CORREÇÃO DE DATA: Blindagem total contra datas futuras em jogos passados
-    let dataFinal = jogoBase.data_jogo;
-    if (matchStatus === 'completed' && dataFinal) {
-        const dataEncontrada = new Date(dataFinal);
-        const agora = new Date();
-        if (dataEncontrada > agora) {
-            dataFinal = agora.toISOString().replace('T', ' ').split('.')[0];
+    if (jogoBase.fakeResult && /^\d+\s*-\s*\d+$/.test(jogoBase.fakeResult)) {
+        const p = jogoBase.fakeResult.split('-');
+        finalHomeScore = parseInt(p[0].trim());
+        finalAwayScore = parseInt(p[1].trim());
+        matchStatus = 'completed';
+    } else if (jogoBase.fakeResult && (jogoBase.fakeResult.toLowerCase().includes('w.o') || jogoBase.fakeResult.toLowerCase().includes('walkover'))) {
+        matchStatus = 'completed';
+    } else {
+        let temPontuacaoReal = false;
+        for (const j of jogosExtraidos) {
+            const cleanResult = j.result ? j.result.toLowerCase().trim() : '';
+            if (j.rubber_number && cleanResult !== 'tba' && cleanResult !== '' && cleanResult !== '-' && cleanResult !== '0-0') {
+                let hSets = 0, aSets = 0;
+                const sets = j.result.replace(/[^\d\s\-]/g, ' ').trim().split(/\s+/);
+                for (let s of sets) {
+                    const parts = s.split('-');
+                    if (parts.length === 2) {
+                        const h = parseInt(parts[0]), a = parseInt(parts[1]);
+                        if (!isNaN(h) && !isNaN(a)) {
+                            if (h > a) hSets++; else if (a > h) aSets++;
+                        }
+                    }
+                }
+                if (hSets > aSets) { finalHomeScore++; temPontuacaoReal = true; }
+                else if (aSets > hSets) { finalAwayScore++; temPontuacaoReal = true; }
+            }
         }
+        if (temPontuacaoReal) matchStatus = 'completed';
     }
 
     try {
         await registarEquipa(jogoBase.home_team, jogoBase.zona, jogoBase.tipo, jogoBase.categoria, jogoBase.grupo);
         await registarEquipa(jogoBase.away_team, jogoBase.zona, jogoBase.tipo, jogoBase.categoria, jogoBase.grupo);
 
-        let matchId;
-        const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogoBase.home_team)}&away_team=eq.${encodeURIComponent(jogoBase.away_team)}&zona=eq.${encodeURIComponent(jogoBase.zona)}&tipo=eq.${encodeURIComponent(jogoBase.tipo)}&categoria=eq.${encodeURIComponent(jogoBase.categoria)}&select=id,data_jogo,status,home_score,away_score`;
+        const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogoBase.home_team)}&away_team=eq.${encodeURIComponent(jogoBase.away_team)}&zona=eq.${encodeURIComponent(jogoBase.zona)}&categoria=eq.${encodeURIComponent(jogoBase.categoria)}&select=id`;
         const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();
 
-        if (!matchesDb || matchesDb.length === 0) {
-            const payloadMatch = {
-                epoca: "2026", fase: "Fase Regular", zona: jogoBase.zona, tipo: jogoBase.tipo,
-                categoria: jogoBase.categoria, grupo: jogoBase.grupo, home_team: jogoBase.home_team,
-                away_team: jogoBase.away_team, data_jogo: dataFinal, status: matchStatus,
-                home_score: matchStatus === 'completed' ? finalHomeScore : null,
-                away_score: matchStatus === 'completed' ? finalAwayScore : null
-            };
+        const hScore = matchStatus === 'completed' ? finalHomeScore : null;
+        const aScore = matchStatus === 'completed' ? finalAwayScore : null;
 
-            const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, {
+        const payload = {
+            epoca: "2026", fase: "Fase Regular", zona: jogoBase.zona, tipo: jogoBase.tipo,
+            categoria: jogoBase.categoria, grupo: jogoBase.grupo, home_team: jogoBase.home_team,
+            away_team: jogoBase.away_team, data_jogo: jogoBase.data_jogo, status: matchStatus,
+            home_score: hScore,
+            away_score: aScore
+        };
+
+        let matchId;
+        if (!matchesDb || matchesDb.length === 0) {
+            const resCreate = await fetch(`${SUPABASE_URL}/rest/v1/matches`, {
                 method: 'POST',
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-                body: JSON.stringify(payloadMatch)
+                body: JSON.stringify(payload)
             });
-            const newMatch = await resCreateMatch.json();
-            matchId = newMatch[0].id;
+            const newM = await resCreate.json();
+            matchId = newM[0].id;
         } else {
             matchId = matchesDb[0].id;
-            let updatePayload = {};
-            if (dataFinal && matchesDb[0].data_jogo !== dataFinal) updatePayload.data_jogo = dataFinal;
-            if (matchesDb[0].status !== matchStatus) updatePayload.status = matchStatus;
-
-            const dbHomeScore = matchesDb[0].home_score ?? -1;
-            const dbAwayScore = matchesDb[0].away_score ?? -1;
-
-            if (matchStatus === 'completed' && (dbHomeScore !== finalHomeScore || dbAwayScore !== finalAwayScore)) {
-                updatePayload.home_score = finalHomeScore;
-                updatePayload.away_score = finalAwayScore;
-            }
-
-            if (Object.keys(updatePayload).length > 0) {
-                await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, {
-                    method: 'PATCH',
-                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updatePayload)
-                });
-            }
+            await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, {
+                method: 'PATCH',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
         }
 
         for (const r of jogosExtraidos) {
-            if (!r.rubber_number) continue;
-            const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id,result,home_duo,away_duo`;
-            const resDetail = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-            const detailsDb = await resDetail.json();
-            const payloadDetail = { match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result };
-
-            if (detailsDb && detailsDb.length > 0) {
-                if (detailsDb[0].result !== r.result || detailsDb[0].home_duo !== r.home_duo) {
-                    await fetch(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailsDb[0].id}`, {
-                        method: 'PATCH',
-                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payloadDetail)
-                    });
-                }
-            } else {
-                await fetch(`${SUPABASE_URL}/rest/v1/match_details`, {
-                    method: 'POST',
-                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payloadDetail)
-                });
-            }
+            if (!r.rubber_number || !r.result) continue;
+            await fetch(`${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}`, {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result })
+            });
         }
-    } catch (error) {}
+    } catch (e) { console.error("❌ Erro Supabase:", e.message); }
+}
+
+async function esperarPeloTiePadel(page) {
+    try {
+        await page.waitForFunction(() => {
+            if (typeof window.Sys !== 'undefined' && window.Sys.WebForms && window.Sys.WebForms.PageRequestManager) {
+                return !window.Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack();
+            }
+            return true;
+        }, { timeout: 12000 });
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 1000));
 }
 
 (async () => {
-    console.log(`🚀 A iniciar a 'Aranha' PadelNetwork - Filtros: ${ZONA_ALVO || 'Todas'} | ${TIPO_ALVO || 'Todos'} | ${CATEGORIA_ALVO || 'Todas'} | ${GRUPO_ALVO || 'Todos'}`);
-
-    const browser = await puppeteer.launch({
-        headless: "new",
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        defaultViewport: null,
-    });
-
+    console.log("🚀 Iniciando Aranha V13 - Filtro Extremo de Cabeçalho...");
+    const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
     const page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
-    try {
-        for (const torneio of torneiosParaCorrer) {
-            console.log(`\n🌍 EXTRAÇÃO: ${torneio.nome} | ${torneio.tipo}`);
+    for (const torneio of torneiosParaCorrer) {
+        console.log(`\n🌍 Extração: ${torneio.nome} | ${torneio.tipo}`);
 
-            try {
-                await page.goto(torneio.url, { waitUntil: 'networkidle2' });
-                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 8000 });
-            } catch (e) { continue; }
+        try {
+            await page.goto(torneio.url, { waitUntil: 'networkidle2' });
+            await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
 
-            const categorias = await page.evaluate(() => {
-                const select = document.querySelector('#drop_tournaments');
-                if (!select) return [];
-                return Array.from(select.options)
-                    .filter(opt => opt.value !== "0" && opt.innerText.trim() !== "")
-                    .map(opt => ({ valor: opt.value, nome: opt.innerText.trim() }));
-            });
+            const cats = await page.evaluate(() => Array.from(document.querySelector('#drop_tournaments').options).filter(o => o.value !== "0").map(o => ({ valor: o.value, nome: o.innerText.trim() })));
 
-            for (const cat of categorias) {
+            for (const cat of cats) {
                 if (CATEGORIA_ALVO && !cat.nome.toUpperCase().includes(CATEGORIA_ALVO.toUpperCase())) continue;
+                console.log(`🎾 Categoria: ${cat.nome}`);
 
-                console.log(`🎾 ${torneio.tipo} > ${cat.nome}`);
+                await page.goto(torneio.url, { waitUntil: 'networkidle2' });
+                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
 
-                try {
-                    await page.goto(torneio.url, { waitUntil: 'networkidle2' });
-                    await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 8000 });
-                    await page.select('#drop_tournaments', cat.valor);
-                    await new Promise(r => setTimeout(r, 2000));
+                await page.select('#drop_tournaments', cat.valor);
+                await esperarPeloTiePadel(page);
 
-                    const clicouEncontros = await page.evaluate(() => {
-                        const links = Array.from(document.querySelectorAll('a, span, div'));
-                        const encontrosLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
-                        if (encontrosLink) { encontrosLink.click(); return true; }
-                        return false;
-                    });
+                const clicouEncontros = await page.evaluate(() => {
+                    const lks = Array.from(document.querySelectorAll('a, span'));
+                    const target = lks.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
+                    if (target) { target.click(); return true; } return false;
+                });
 
-                    if (!clicouEncontros) continue;
-                    await new Promise(r => setTimeout(r, 2000));
+                if (!clicouEncontros) continue;
+                await esperarPeloTiePadel(page);
 
-                    const grupos = await page.evaluate(() => {
-                        const links = Array.from(document.querySelectorAll('a'));
-                        return links.map(l => l.innerText.trim()).filter(text => text.includes("Grupo") || text === "Main");
-                    });
+                const gps = await page.evaluate(() => Array.from(document.querySelectorAll('a')).map(l => l.innerText.trim()).filter(t => t.includes("Grupo") || t === "Main"));
 
-                    for (const grupo of grupos) {
+                for (const grupo of gps) {
+                    if (GRUPO_ALVO && !grupo.toUpperCase().includes(GRUPO_ALVO.toUpperCase())) continue;
+                    console.log(`   🔎 Grupo: ${grupo} | A extrair...`);
 
-                        // ✨ A MAGIA ACONTECE AQUI: O filtro de Grupo!
-                        if (GRUPO_ALVO && !grupo.toUpperCase().includes(GRUPO_ALVO.toUpperCase())) {
-                            continue;
-                        }
+                    await page.evaluate((g) => {
+                        const a = Array.from(document.querySelectorAll('a')).find(el => el.innerText.trim() === g);
+                        if(a) { a.click(); window.scrollTo(0, document.body.scrollHeight / 3); }
+                    }, grupo);
 
-                        console.log(`   🔎 A procurar jogos em: ${grupo}...`);
+                    await esperarPeloTiePadel(page);
 
-                        await Promise.all([
-                            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
-                            page.evaluate((nomeGrupo) => {
-                                const links = Array.from(document.querySelectorAll('a'));
-                                const target = links.find(l => l.innerText.trim() === nomeGrupo);
-                                if (target) target.click();
-                            }, grupo)
-                        ]);
+                    const metas = await page.evaluate(() => {
+                        const res = [];
+                        const rows = document.querySelectorAll('table tr');
 
-                        await new Promise(r => setTimeout(r, 1000));
+                        rows.forEach(tr => {
+                            const tds = Array.from(tr.querySelectorAll('td'));
+                            if (tds.length < 3) return;
 
-                        const metadadosJogos = await page.evaluate(() => {
-                            const arr = [];
-                            let indexDoBotao = 0;
+                            let home = "", away = "", dataJogo = null, mainResult = "";
 
-                            document.querySelectorAll('table tr').forEach((tr) => {
-                                const tds = Array.from(tr.querySelectorAll('td'));
-                                let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
-
-                                const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
-                                if (dashIdx > 0) {
-                                    home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
-                                    away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
+                            const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
+                            if (dashIdx > 0 && dashIdx < tds.length - 1) {
+                                home = tds[dashIdx-1].innerText.replace(/✔/g,'').trim();
+                                away = tds[dashIdx+1].innerText.replace(/✔/g,'').trim();
+                            } else {
+                                for (let i = 0; i < tds.length; i++) {
+                                    let txt = tds[i].innerText.replace(/✔/g, '').trim();
+                                    if (txt.includes(' - ') && !/^\d/.test(txt) && !txt.toLowerCase().includes('w.o')) {
+                                        const parts = txt.split(/\s+-\s+/);
+                                        if (parts.length >= 2) {
+                                            home = parts[0].trim();
+                                            away = parts.slice(1).join(' - ').trim();
+                                            break;
+                                        }
+                                    }
                                 }
+                            }
 
-                                // ✨ SUPER REGEX: Ignora vírgulas e aceita ISO ou PT
-                                const regexISO = /(\d{4}-\d{2}-\d{2})[,\s]*(\d{2}:\d{2})?/;
-                                const regexPT = /(\d{2})\/(\d{2})\/(\d{4})[,\s]*(\d{2}:\d{2})?/;
-
-                                for (let td of tds) {
-                                    const text = td.innerText.trim();
-                                    const matchISO = text.match(regexISO);
-                                    const matchPT = text.match(regexPT);
-
-                                    if (matchISO) {
-                                        dataJogo = matchISO[2] ? `${matchISO[1]} ${matchISO[2]}:00` : `${matchISO[1]} 00:00:00`;
+                            if (home !== "" && away !== "") {
+                                for (let j = 0; j < tds.length; j++) {
+                                    let txt = tds[j].innerText.replace(/✔/g, '').trim();
+                                    if (txt.match(/^\d+\s*[- ]\s*\d+$/)) {
+                                        const nums = txt.match(/\d+/g);
+                                        mainResult = `${nums[0]}-${nums[1]}`;
                                         break;
-                                    } else if (matchPT) {
-                                        dataJogo = `${matchPT[3]}-${matchPT[2]}-${matchPT[1]} ${matchPT[4] || '00:00'}:00`;
+                                    } else if (txt.toLowerCase().includes('w.o') || txt.toLowerCase().includes('walkover')) {
+                                        mainResult = txt;
                                         break;
                                     }
                                 }
 
-                                if(home !== "Equipa Casa" && home !== "") {
-                                    const btnLupa = tr.querySelector('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
-                                    let temBotao = !!btnLupa;
-                                    let btnIdxToClick = temBotao ? indexDoBotao++ : -1;
-                                    arr.push({ home, away, dataJogo, temBotao, btnIdxToClick });
+                                tds.forEach(td => {
+                                    const text = td.innerText.replace(/\n/g, ' ').trim();
+                                    const mPT = text.match(/(\d{2})[\/\-\s]+(\d{2})[\/\-\s]+(\d{4})(?:[,\s]+(?:Início\s*às\s*)?(\d{2}:\d{2}))?/i);
+                                    const mISO = text.match(/(\d{4})[\/\-\s]+(\d{2})[\/\-\s]+(\d{2})(?:[,\s]+(?:Início\s*às\s*)?(\d{2}:\d{2}))?/i);
+                                    if (mPT && !dataJogo) dataJogo = `${mPT[3]}-${mPT[2]}-${mPT[1]} ${mPT[4] || '00:00'}:00`;
+                                    else if (mISO && !dataJogo) dataJogo = `${mISO[1]}-${mISO[2]}-${mISO[3]} ${mISO[4] || '00:00'}:00`;
+                                });
+
+                                // ✨ FILTRO SUPREMO: SE NÃO TEM DATA VÁLIDA, NÃO É JOGO, É CABEÇALHO LIXO!
+                                if (dataJogo !== null) {
+                                    res.push({ home, away, dataJogo, mainResult });
                                 }
-                            });
-                            return arr;
+                            }
                         });
+                        return res;
+                    });
 
-                        for (const meta of metadadosJogos) {
-                            try {
-                                if (!meta.temBotao) {
-                                    await guardarNoSupabaseEmTempoReal([{
-                                        zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: grupo,
-                                        home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo
-                                    }]);
-                                    continue;
+                    console.log(`      📊 Encontrados ${metas.length} encontros.`);
+
+                    for (const m of metas) {
+                        try {
+                            if (!m.mainResult || m.mainResult.trim() === "") {
+                                await guardarNoSupabaseEmTempoReal([{
+                                    zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo,
+                                    home_team: m.home, away_team: m.away, data_jogo: m.dataJogo, fakeResult: null
+                                }]);
+                                continue;
+                            }
+
+                            await page.evaluate((g) => {
+                                const a = Array.from(document.querySelectorAll('a')).find(el => el.innerText.trim() === g);
+                                if(a) a.click();
+                            }, grupo);
+                            await esperarPeloTiePadel(page);
+
+                            const abriu = await page.evaluate((h, a) => {
+                                const rows = document.querySelectorAll('table tr');
+                                for (let tr of rows) {
+                                    const tds = Array.from(tr.querySelectorAll('td'));
+                                    if (tds.length < 3) continue;
+
+                                    let rHome = "", rAway = "";
+                                    const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
+                                    if (dashIdx > 0 && dashIdx < tds.length - 1) {
+                                        rHome = tds[dashIdx-1].innerText.replace(/✔/g,'').trim();
+                                        rAway = tds[dashIdx+1].innerText.replace(/✔/g,'').trim();
+                                    } else {
+                                        for (let i = 0; i < tds.length - 1; i++) {
+                                            let txt = tds[i].innerText.replace(/✔/g, '').trim();
+                                            if (txt.includes(' - ') && !/^\d/.test(txt)) {
+                                                const parts = txt.split(/\s+-\s+/);
+                                                if (parts.length >= 2) {
+                                                    rHome = parts[0].trim();
+                                                    rAway = parts.slice(1).join(' - ').trim();
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (rHome === h && rAway === a) {
+                                        const btn = tr.querySelector('a[id*="link_open_rubbers"], a[mytitle="Abrir"]');
+                                        if (btn) { btn.click(); return true; }
+                                    }
                                 }
+                                return false;
+                            }, m.home, m.away);
 
-                                await Promise.all([
-                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
-                                    page.evaluate((idx) => {
-                                        const btns = document.querySelectorAll('a[id*="link_open_rubbers"], a[mytitle="Abrir"], a.btn-action-grid');
-                                        if (btns[idx]) btns[idx].click();
-                                    }, meta.btnIdxToClick)
-                                ]);
+                            if (!abriu) {
+                                await guardarNoSupabaseEmTempoReal([{
+                                    zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo,
+                                    home_team: m.home, away_team: m.away, data_jogo: m.dataJogo, fakeResult: m.mainResult
+                                }]);
+                                continue;
+                            }
 
-                                await new Promise(r => setTimeout(r, 1500));
+                            await esperarPeloTiePadel(page);
 
-                                const rubbers = await page.evaluate((metaInfo, nomeCat, nomeGrupo, nomeZona, tipoT) => {
-                                    const details = [];
-                                    const clean = (t) => t.replace(/✔/g, '').replace(/\n/g, ' / ').replace(/\s+/g, ' ').trim();
-                                    document.querySelectorAll('table tr').forEach(row => {
-                                        const tds = Array.from(row.querySelectorAll('td'));
-                                        const texts = tds.map(td => td.innerText.trim());
-                                        const rIdx = texts.findIndex(txt => /^R\d$/.test(txt));
-                                        if (rIdx !== -1 && texts.length > rIdx + 3) {
-                                            const rubberNum = parseInt(texts[rIdx].replace('R', ''));
-                                            let scoreIdx = rIdx + 4;
-                                            if (texts[scoreIdx] === '✔' || texts[scoreIdx] === '') scoreIdx++;
+                            const rbs = await page.evaluate((metaInfo, nCat, nGrp, nZona, nTipo) => {
+                                const details = [];
+                                const cleanDuo = (t) => {
+                                    if(!t) return null;
+                                    let c = t.replace(/✔/g, '').replace(/\n/g, ' / ').trim();
+                                    c = c.replace(/\s*\/\s*/g, ' / ').replace(/(\/\s*)+/g, '/ ').replace(/^\s*\/\s*|\s*\/\s*$/g, '').trim();
+                                    if (c.toLowerCase().includes("a anunciar") || c === "-" || c === "") return null;
+                                    return c;
+                                };
+
+                                const cleanScore = (t) => {
+                                    if(!t) return null;
+                                    return t.replace(/✔/g, '').replace(/\n/g, ' ').trim();
+                                };
+
+                                document.querySelectorAll('table tr').forEach(row => {
+                                    const tds = Array.from(row.querySelectorAll('td'));
+                                    const rIdx = tds.findIndex(td => /^R\d$/.test(td.innerText.trim()));
+
+                                    if (rIdx !== -1) {
+                                        const rubberNum = parseInt(tds[rIdx].innerText.replace('R','').trim());
+                                        const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
+
+                                        if (dashIdx !== -1 && dashIdx > 0 && dashIdx < tds.length - 1) {
+                                            const homeDuo = cleanDuo(tds[dashIdx - 1].innerText);
+                                            const awayDuo = cleanDuo(tds[dashIdx + 1].innerText);
+
+                                            let result = null;
+                                            for (let i = dashIdx + 2; i < tds.length; i++) {
+                                                let val = tds[i].innerText.replace(/✔/g, '').trim();
+                                                if (val !== '' && val !== 'Tba') {
+                                                    result = cleanScore(val);
+                                                    break;
+                                                }
+                                            }
+
                                             details.push({
-                                                zona: nomeZona, tipo: tipoT, categoria: nomeCat, grupo: nomeGrupo,
+                                                zona: nZona, tipo: nTipo, categoria: nCat, grupo: nGrp,
                                                 home_team: metaInfo.home, away_team: metaInfo.away, data_jogo: metaInfo.dataJogo,
-                                                rubber_number: rubberNum, home_duo: clean(texts[rIdx + 2]),
-                                                away_duo: clean(texts[rIdx + 3] === '-' ? texts[rIdx + 4] : texts[rIdx + 3]),
-                                                result: clean(texts[scoreIdx])
+                                                rubber_number: rubberNum,
+                                                home_duo: homeDuo,
+                                                away_duo: awayDuo,
+                                                result: result,
+                                                fakeResult: metaInfo.mainResult
                                             });
                                         }
-                                    });
-                                    return details;
-                                }, meta, cat.nome, grupo, torneio.nome, torneio.tipo);
+                                    }
+                                });
+                                return details;
+                            }, m, cat.nome, grupo, torneio.nome, torneio.tipo);
 
-                                await guardarNoSupabaseEmTempoReal(rubbers.length > 0 ? rubbers : [{
-                                    zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: grupo,
-                                    home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo
-                                }]);
+                            await guardarNoSupabaseEmTempoReal(rbs.length > 0 ? rbs : [{ zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo, home_team: m.home, away_team: m.away, data_jogo: m.dataJogo, fakeResult: m.mainResult }]);
 
-                                await Promise.all([
-                                    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
-                                    page.evaluate(() => {
-                                        const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
-                                        if (btn) btn.click();
-                                    })
-                                ]);
-                                await new Promise(r => setTimeout(r, 1000));
-                            } catch (e) {
-                                await page.goBack().catch(() => {});
-                            }
+                            await page.evaluate(() => {
+                                const b = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
+                                if(b) b.click();
+                            });
+                            await esperarPeloTiePadel(page);
+
+                        } catch (errInterno) {
+                            console.error(`      ⚠️ Erro menor ao raspar jogo, a continuar...`);
                         }
                     }
-                } catch (catError) {}
+                }
             }
+        } catch (e) {
+            console.error(`❌ Erro crítico no torneio ${torneio.nome}:`, e.message);
         }
-    } catch (err) {} finally { await browser.close(); }
+    }
+    await browser.close();
+    console.log("🛑 Limpeza terminada.");
 })();
