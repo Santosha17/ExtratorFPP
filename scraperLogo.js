@@ -1,9 +1,9 @@
+require('dotenv').config();
 const puppeteer = require('puppeteer');
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
-const SUPABASE_URL = "https://eezbrdjncjjgmjueftgg.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlemJyZGpuY2pqZ21qdWVmdGdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTEzNzEyMywiZXhwIjoyMDkwNzEzMTIzfQ.KDGRw0MClRKxYUyOMiglb8VYGn8uHii79i-3hYkAWlc";
-// ---------------------------------
+const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
+const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
@@ -66,7 +66,7 @@ async function registarLogoEquipa(nome, zona, tipo, categoria, grupo, logo_url) 
                 'apikey': SUPABASE_KEY,
                 'Authorization': `Bearer ${SUPABASE_KEY}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates' // Fundamental para atualizar o logo se a equipa já existir
+                'Prefer': 'resolution=merge-duplicates'
             },
             body: JSON.stringify(payload)
         });
