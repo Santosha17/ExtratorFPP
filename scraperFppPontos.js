@@ -78,7 +78,7 @@ async function carregarEquipas() {
     }
 }
 
-// 2. Enviar jogadores para o Supabase (NOVO DUPLO ATAQUE: Jogadores + Tabela de Ligação)
+// 2. Enviar jogadores para o Supabase (CORRIGIDO: Pontos associados à equipa)
 async function upsertJogadores(plantel, idEquipaDB) {
     if (plantel.length === 0) return false;
 
@@ -91,13 +91,15 @@ async function upsertJogadores(plantel, idEquipaDB) {
     }));
 
     // 2.2 Dados de Ligação (Para a tabela 'jogadores_equipas')
+    // 🚀 ADICIONADO: A coluna pontos_equipa captura o ranking para esta equipa específica
     const ligacoes = plantel.map(j => ({
         fpp_id: j.fpp_id,
-        equipa_id: idEquipaDB
+        equipa_id: idEquipaDB,
+        pontos_equipa: j.pontos_fpp
     }));
 
     try {
-        // A) GRAVAR JOGADOR E PONTOS
+        // A) GRAVAR JOGADOR E PONTOS GLOBAIS
         const resJogadores = await fetch(`${SUPABASE_URL}/rest/v1/jogadores?on_conflict=fpp_id`, {
             method: 'POST',
             headers: {
@@ -111,19 +113,26 @@ async function upsertJogadores(plantel, idEquipaDB) {
 
         if (!resJogadores.ok) throw new Error(await resJogadores.text());
 
-        // B) GRAVAR A LIGAÇÃO À EQUIPA (Ignora se o jogador já estiver registado nesta equipa específica)
-        const resLigacoes = await fetch(`${SUPABASE_URL}/rest/v1/jogadores_equipas`, {
+        // B) GRAVAR A LIGAÇÃO À EQUIPA E OS PONTOS ESPECÍFICOS DESSA EQUIPA
+        const resLigacoes = await fetch(`${SUPABASE_URL}/rest/v1/jogadores_equipas?on_conflict=fpp_id,equipa_id`, {
             method: 'POST',
             headers: {
                 'apikey': SUPABASE_KEY,
                 'Authorization': `Bearer ${SUPABASE_KEY}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'resolution=ignore-duplicates'
+                'Prefer': 'resolution=merge-duplicates'
             },
             body: JSON.stringify(ligacoes)
         });
 
-        if (!resLigacoes.ok) throw new Error(await resLigacoes.text());
+        if (!resLigacoes.ok) {
+            // Fallback elegante caso a DB ainda não tenha a constraint (fpp_id, equipa_id) criada
+            if (resLigacoes.status === 409 || (await resLigacoes.clone().text()).includes("conflict")) {
+                console.warn("   ⚠️ Conflito no on_conflict da tabela de ligação. Verifica as tuas Chaves Únicas na DB.");
+            } else {
+                throw new Error(await resLigacoes.text());
+            }
+        }
 
         return true;
     } catch (err) {
@@ -200,7 +209,7 @@ async function upsertJogadores(plantel, idEquipaDB) {
 
                 console.log(`   👥 Lendo plantel: ${eq.nomeEquipa}`);
 
-                // 1. CLIQUE NATIVO (Sem o 'eval' que causava erro no Strict Mode)
+                // 1. CLIQUE NATIVO
                 await page.evaluate((id) => {
                     const btn = document.getElementById(id);
                     if (btn) btn.click();
@@ -209,54 +218,81 @@ async function upsertJogadores(plantel, idEquipaDB) {
                 // 2. Espera o carregamento dos jogadores no fundo da página
                 await new Promise(r => setTimeout(r, 5000));
 
-                // 3. EXTRAÇÃO (Lê os dados formatados conforme a tabela real)
+                // 3. EXTRAÇÃO À PROVA DE BALA (Pesquisa Telerik RadGrid + Brute Force)
                 const plantel = await page.evaluate(() => {
                     const resultados = [];
-                    const rows = document.querySelectorAll('table tbody tr');
+                    // O TiePadel usa tabelas da Telerik chamadas 'rgMasterTable'
+                    const grids = document.querySelectorAll('table.rgMasterTable');
 
-                    rows.forEach(tr => {
-                        const tds = tr.querySelectorAll('td');
+                    grids.forEach(table => {
+                        const ths = Array.from(table.querySelectorAll('th'));
+                        if (ths.length === 0) return;
 
-                        // Baseado na imagem: tds[0]=Licença | tds[1]=Nome | tds[2]=Escalão | tds[3]=Pontos
-                        if (tds.length >= 4) {
-                            const licenca = tds[0].innerText.trim();
-                            const nome = tds[1].innerText.trim();
-                            let pontosStr = tds[3].innerText.trim();
+                        let idxLicenca = -1, idxNome = -1, idxPontos = -1;
 
-                            // TRATAMENTO DE PONTOS EXATO COM CASAS DECIMAIS
-                            let pontosLimpos = 0;
-                            if (pontosStr) {
-                                // Exemplo: "1.676,72" -> "1676.72"
-                                const formatado = pontosStr.replace(/\./g, '').replace(',', '.');
-                                // Guardamos o valor decimal exato (não arredondamos mais)
-                                pontosLimpos = parseFloat(formatado) || 0;
+                        ths.forEach((th, index) => {
+                            const text = th.innerText.toUpperCase().trim();
+                            if (text.includes('LICEN')) idxLicenca = index;
+                            if (text === 'NOME' || text.includes('JOGADOR')) idxNome = index;
+                            if (text.includes('PONTOS')) idxPontos = index;
+                        });
+
+                        // Fallback seguro para Licença e Nome se os cabeçalhos estiverem escondidos
+                        if (idxLicenca === -1) idxLicenca = 0;
+                        if (idxNome === -1) idxNome = 1;
+
+                        const rows = table.querySelectorAll('tbody tr');
+                        rows.forEach(tr => {
+                            // Ignora cabeçalhos e rodapés manhosos do TiePadel
+                            if (tr.classList.contains('rgHeader') || tr.classList.contains('rgPager')) return;
+
+                            const tds = tr.querySelectorAll('td');
+                            if (tds.length > 2) {
+                                const licenca = tds[idxLicenca]?.innerText.trim();
+                                const nome = tds[idxNome]?.innerText.trim();
+
+                                let pontosLimpos = 0;
+
+                                // Se encontrou a coluna dos pontos pelo nome, usa-a
+                                if (idxPontos !== -1 && tds[idxPontos]) {
+                                    const ptsText = tds[idxPontos].innerText.trim();
+                                    pontosLimpos = parseFloat(ptsText.replace(/\./g, '').replace(',', '.')) || 0;
+                                } else {
+                                    // 🚀 BRUTE FORCE: Varre as colunas de trás para a frente à procura do número dos pontos
+                                    for (let i = tds.length - 1; i >= 2; i--) {
+                                        const val = tds[i].innerText.trim();
+                                        // Procura formatos como "1.012,50", "121,76" ou "0,00"
+                                        if (/^[0-9]+[.,][0-9]+$/.test(val) || /^[0-9]+$/.test(val)) {
+                                            pontosLimpos = parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0;
+                                            break; // Encontrou os pontos, para de procurar nesta linha
+                                        }
+                                    }
+                                }
+
+                                const isLicencaValida = /^\d+$/.test(licenca);
+
+                                if (isLicencaValida && nome && nome.toUpperCase() !== "JOGADOR") {
+                                    resultados.push({
+                                        nome: nome,
+                                        fpp_id: licenca,
+                                        pontos_fpp: pontosLimpos,
+                                        updated_at: new Date().toISOString()
+                                    });
+                                }
                             }
-
-                            // A ASSINATURA: Se a coluna da licença só tiver números, é um jogador!
-                            const isLicencaValida = /^\d+$/.test(licenca);
-
-                            if (isLicencaValida && nome !== "" && nome.toUpperCase() !== "JOGADOR") {
-                                resultados.push({
-                                    nome: nome,
-                                    fpp_id: licenca,
-                                    pontos_fpp: pontosLimpos,
-                                    updated_at: new Date().toISOString()
-                                });
-                            }
-                        }
+                        });
                     });
 
                     return resultados;
                 });
 
                 if (plantel.length > 0) {
-                    // Enviamos o plantel e o ID da Equipa para a função de Duplo Ataque
                     const sucesso = await upsertJogadores(plantel, idEquipaDB);
                     if (sucesso) {
                         console.log(`      ✅ ${plantel.length} jogadores atualizados e ligados à equipa!`);
                     }
                 } else {
-                    console.log(`      ⚠️ Zero jogadores. (Botão não carregou ou equipa vazia)`);
+                    console.log(`      ⚠️ Zero jogadores. (Botão não carregou, layout estranho, ou equipa vazia)`);
                 }
             }
 
