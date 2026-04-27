@@ -10,44 +10,44 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
 // --- LISTA DE TORNEIOS ---
 const TORNEIOS_LIGA = [
-    { nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
-    { nome: "Zona 1A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/71d3b007-c015-46b7-90de-181bc5e7f45d/Draws" },
-    { nome: "Zona 1B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/c55f6966-2a0a-45db-891d-0e380ff79879/Draws" },
-    { nome: "Zona 1B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/4bfee2ef-879a-4fd7-a0aa-af46e9d44485/Draws" },
-    { nome: "Zona 1C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/d7229a65-03ae-4b89-969a-ae104736139b/Draws" },
-    { nome: "Zona 1C", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/40f779ef-fa5c-4c3a-919e-961f2ee17048/Draws" },
-    { nome: "Zona 2", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b028a5c4-fa22-4b1a-af5f-ef38d675bc7d/Draws" },
-    { nome: "Zona 2", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/dbf74418-49f7-48c8-8e23-546f6d4b2aee/Draws" },
-    { nome: "Zona 3A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/51ab7f23-a435-47c6-b0e3-16839d3585d7/Draws" },
-    { nome: "Zona 3A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/36c21e4e-c3e1-4f67-9fea-53cf9fb7e72e/Draws" },
-    { nome: "Zona 3B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona3B/Draws" },
-    { nome: "Zona 3B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/87d6ab8b-3fa6-4b80-8692-fd527afd1da3/Draws" },
-    { nome: "Zona 3C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/f642cf7e-c5f3-43c6-bc4e-b86c67f14374/Draws" },
-    { nome: "Zona 3C", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/bd75b6b0-f5b7-4852-b65f-499646e07c9c/Draws" },
-    { nome: "Zona 3D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/7e0cc576-24ab-4ea4-9090-c496970ce8bc/Draws" },
-    { nome: "Zona 3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/feace55d-c56c-4853-9249-aadedba5f923/Draws" },
-    { nome: "Zona 4A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4A/Draws" },
-    { nome: "Zona 4A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/06d421b9-6fd7-4b5c-a1f0-4b619cef170b/Draws" },
+    //{ nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
+    //{ nome: "Zona 1A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/71d3b007-c015-46b7-90de-181bc5e7f45d/Draws" },
+    //{ nome: "Zona 1B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/c55f6966-2a0a-45db-891d-0e380ff79879/Draws" },
+    //{ nome: "Zona 1B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/4bfee2ef-879a-4fd7-a0aa-af46e9d44485/Draws" },
+    //{ nome: "Zona 1C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/d7229a65-03ae-4b89-969a-ae104736139b/Draws" },
+    //{ nome: "Zona 1C", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/40f779ef-fa5c-4c3a-919e-961f2ee17048/Draws" },
+    //{ nome: "Zona 2", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b028a5c4-fa22-4b1a-af5f-ef38d675bc7d/Draws" },
+    //{ nome: "Zona 2", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/dbf74418-49f7-48c8-8e23-546f6d4b2aee/Draws" },
+    //{ nome: "Zona 3A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/51ab7f23-a435-47c6-b0e3-16839d3585d7/Draws" },
+    //{ nome: "Zona 3A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/36c21e4e-c3e1-4f67-9fea-53cf9fb7e72e/Draws" },
+    //{ nome: "Zona 3B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona3B/Draws" },
+    //{ nome: "Zona 3B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/87d6ab8b-3fa6-4b80-8692-fd527afd1da3/Draws" },
+    //{ nome: "Zona 3C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/f642cf7e-c5f3-43c6-bc4e-b86c67f14374/Draws" },
+    //{ nome: "Zona 3C", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/bd75b6b0-f5b7-4852-b65f-499646e07c9c/Draws" },
+    //{ nome: "Zona 3D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/7e0cc576-24ab-4ea4-9090-c496970ce8bc/Draws" },
+    //{ nome: "Zona 3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/feace55d-c56c-4853-9249-aadedba5f923/Draws" },
+    //{ nome: "Zona 4A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4A/Draws" },
+    //{ nome: "Zona 4A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/06d421b9-6fd7-4b5c-a1f0-4b619cef170b/Draws" },
     { nome: "Zona 4B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Draws" },
-    { nome: "Zona 4B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/f0eea46a-dec7-4bbe-8051-b11565a7a6fc/Draws" },
-    { nome: "Zona 4C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4C/Draws" },
-    { nome: "Zona 4C", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona4C/Draws" },
-    { nome: "Zona 4D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4D/Draws" },
-    { nome: "Zona 4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/6ca9340a-e4ff-459d-ba60-44439acf98f9/Draws" },
-    { nome: "Zona 5", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona5/Draws" },
-    { nome: "Zona 5", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/67abb21b-fa70-499a-bb3b-74c51f2f59a3/Draws" },
-    { nome: "Zona 6A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona6A/Draws" },
-    { nome: "Zona 6A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona6A/Draws" },
-    { nome: "Zona 6B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona6B/Draws" },
-    { nome: "Zona 6B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona6B/Draws" },
-    { nome: "Zona 7A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona7A/Draws" },
-    { nome: "Zona 7A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/2af4cd70-9fde-4d3f-8c50-83637799aa3d/Draws" },
-    { nome: "Zona 7B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona7B/Draws" },
-    { nome: "Zona 7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/4f14c7fc-3318-4ba6-84d0-dc5417d4d9d4/Draws" },
-    { nome: "Zona 8A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona8A/Draws" },
-    { nome: "Zona 8A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona8A/Draws" },
-    { nome: "Zona 8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona8B/Draws" },
-    { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
+    //{ nome: "Zona 4B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/f0eea46a-dec7-4bbe-8051-b11565a7a6fc/Draws" },
+    //{ nome: "Zona 4C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4C/Draws" },
+    //{ nome: "Zona 4C", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona4C/Draws" },
+    //{ nome: "Zona 4D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4D/Draws" },
+    //{ nome: "Zona 4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/6ca9340a-e4ff-459d-ba60-44439acf98f9/Draws" },
+    //{ nome: "Zona 5", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona5/Draws" },
+    //{ nome: "Zona 5", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/67abb21b-fa70-499a-bb3b-74c51f2f59a3/Draws" },
+    //{ nome: "Zona 6A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona6A/Draws" },
+    //{ nome: "Zona 6A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona6A/Draws" },
+    //{ nome: "Zona 6B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona6B/Draws" },
+    //{ nome: "Zona 6B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona6B/Draws" },
+    //{ nome: "Zona 7A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona7A/Draws" },
+    //{ nome: "Zona 7A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/2af4cd70-9fde-4d3f-8c50-83637799aa3d/Draws" },
+    //{ nome: "Zona 7B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona7B/Draws" },
+    //{ nome: "Zona 7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/4f14c7fc-3318-4ba6-84d0-dc5417d4d9d4/Draws" },
+    //{ nome: "Zona 8A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona8A/Draws" },
+    //{ nome: "Zona 8A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularVetZona8A/Draws" },
+    //{ nome: "Zona 8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona8B/Draws" },
+    //{ nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
 const mapaEquipas = {};
@@ -161,7 +161,6 @@ async function upsertJogadores(plantel, idEquipaDB) {
         try {
             await page.goto(torneio.url, { waitUntil: 'networkidle2', timeout: 60000 });
 
-            // Clica na aba "EQUIPAS"
             const clicouEquipas = await page.evaluate(() => {
                 const elements = Array.from(document.querySelectorAll('a, span, div.rtsLink'));
                 const target = elements.find(el => el.innerText && el.innerText.trim().toUpperCase() === 'EQUIPAS');
@@ -176,131 +175,146 @@ async function upsertJogadores(plantel, idEquipaDB) {
 
             await new Promise(r => setTimeout(r, 4000));
 
-            // Mapear linhas de equipas
-            const linhasEquipas = await page.evaluate(() => {
-                const rows = Array.from(document.querySelectorAll('table[id*="grid_all_teams"] tbody tr'));
-                return rows.map(tr => {
-                    const btn = tr.querySelector('a[mytitle="Ver Jogadores"]');
-                    const seccaoTd = tr.querySelector('td:nth-child(2)');
-                    const equipaTd = tr.querySelector('td:nth-child(3)');
+            // 🚀 INÍCIO DA ALTERAÇÃO PARA PAGINAÇÃO
+            let temProximaPagina = true;
+            let paginaAtual = 1;
 
-                    return {
-                        nomeEquipa: equipaTd ? equipaTd.innerText.trim() : null,
-                        categoria: seccaoTd ? seccaoTd.innerText.trim() : null,
-                        botaoId: btn ? btn.id : null
-                    };
-                }).filter(e => e.botaoId && e.nomeEquipa);
-            });
+            while (temProximaPagina) {
+                console.log(`   📄 Página ${paginaAtual}...`);
 
-            console.log(`   🔎 Encontradas ${linhasEquipas.length} equipas no site.`);
+                // Mapear linhas de equipas da página atual
+                const linhasEquipas = await page.evaluate(() => {
+                    const rows = Array.from(document.querySelectorAll('table[id*="grid_all_teams"] tbody tr'));
+                    return rows.map(tr => {
+                        const btn = tr.querySelector('a[mytitle="Ver Jogadores"]');
+                        const seccaoTd = tr.querySelector('td:nth-child(2)');
+                        const equipaTd = tr.querySelector('td:nth-child(3)');
 
-            for (const eq of linhasEquipas) {
-                const chaveProcurada = `${eq.nomeEquipa}|${torneio.nome}|${torneio.tipo}|${eq.categoria}`.toLowerCase().trim();
-                let idEquipaDB = mapaEquipas[chaveProcurada];
+                        return {
+                            nomeEquipa: equipaTd ? equipaTd.innerText.trim() : null,
+                            categoria: seccaoTd ? seccaoTd.innerText.trim() : null,
+                            botaoId: btn ? btn.id : null
+                        };
+                    }).filter(e => e.botaoId && e.nomeEquipa);
+                });
 
-                if (!idEquipaDB) {
-                    idEquipaDB = mapaEquipas[eq.nomeEquipa.toLowerCase().trim()];
+                if (linhasEquipas.length === 0) {
+                    console.log("   ⚠️ Nenhuma equipa encontrada nesta página.");
+                    break;
                 }
 
-                if (!idEquipaDB) {
-                    console.log(`   ⏭️ Ignorada: [${eq.nomeEquipa}] (Não mapeada na DB)`);
-                    continue;
-                }
+                // Guardamos o nome da primeira equipa para comparar depois do clique
+                const primeiraEquipaAntes = linhasEquipas[0].nomeEquipa;
 
-                console.log(`   👥 Lendo plantel: ${eq.nomeEquipa}`);
+                for (const eq of linhasEquipas) {
+                    const chaveProcurada = `${eq.nomeEquipa}|${torneio.nome}|${torneio.tipo}|${eq.categoria}`.toLowerCase().trim();
+                    let idEquipaDB = mapaEquipas[chaveProcurada] || mapaEquipas[eq.nomeEquipa.toLowerCase().trim()];
 
-                // 1. CLIQUE NATIVO
-                await page.evaluate((id) => {
-                    const btn = document.getElementById(id);
-                    if (btn) btn.click();
-                }, eq.botaoId);
+                    if (!idEquipaDB) {
+                        console.log(`   ⏭️ Ignorada: [${eq.nomeEquipa}] (Não mapeada)`);
+                        continue;
+                    }
 
-                // 2. Espera o carregamento dos jogadores no fundo da página
-                await new Promise(r => setTimeout(r, 5000));
+                    console.log(`   👥 Lendo plantel: ${eq.nomeEquipa}`);
 
-                // 3. EXTRAÇÃO À PROVA DE BALA (Pesquisa Telerik RadGrid + Brute Force)
-                const plantel = await page.evaluate(() => {
-                    const resultados = [];
-                    // O TiePadel usa tabelas da Telerik chamadas 'rgMasterTable'
-                    const grids = document.querySelectorAll('table.rgMasterTable');
-
-                    grids.forEach(table => {
-                        const ths = Array.from(table.querySelectorAll('th'));
-                        if (ths.length === 0) return;
-
-                        let idxLicenca = -1, idxNome = -1, idxPontos = -1;
-
-                        ths.forEach((th, index) => {
-                            const text = th.innerText.toUpperCase().trim();
-                            if (text.includes('LICEN')) idxLicenca = index;
-                            if (text === 'NOME' || text.includes('JOGADOR')) idxNome = index;
-                            if (text.includes('PONTOS')) idxPontos = index;
-                        });
-
-                        // Fallback seguro para Licença e Nome se os cabeçalhos estiverem escondidos
-                        if (idxLicenca === -1) idxLicenca = 0;
-                        if (idxNome === -1) idxNome = 1;
-
-                        const rows = table.querySelectorAll('tbody tr');
-                        rows.forEach(tr => {
-                            // Ignora cabeçalhos e rodapés manhosos do TiePadel
-                            if (tr.classList.contains('rgHeader') || tr.classList.contains('rgPager')) return;
-
-                            const tds = tr.querySelectorAll('td');
-                            if (tds.length > 2) {
-                                const licenca = tds[idxLicenca]?.innerText.trim();
-                                const nome = tds[idxNome]?.innerText.trim();
-
-                                let pontosLimpos = 0;
-
-                                // Se encontrou a coluna dos pontos pelo nome, usa-a
-                                if (idxPontos !== -1 && tds[idxPontos]) {
-                                    const ptsText = tds[idxPontos].innerText.trim();
-                                    pontosLimpos = parseFloat(ptsText.replace(/\./g, '').replace(',', '.')) || 0;
-                                } else {
-                                    // 🚀 BRUTE FORCE: Varre as colunas de trás para a frente à procura do número dos pontos
-                                    for (let i = tds.length - 1; i >= 2; i--) {
-                                        const val = tds[i].innerText.trim();
-                                        // Procura formatos como "1.012,50", "121,76" ou "0,00"
-                                        if (/^[0-9]+[.,][0-9]+$/.test(val) || /^[0-9]+$/.test(val)) {
-                                            pontosLimpos = parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0;
-                                            break; // Encontrou os pontos, para de procurar nesta linha
-                                        }
-                                    }
-                                }
-
-                                const isLicencaValida = /^\d+$/.test(licenca);
-
-                                if (isLicencaValida && nome && nome.toUpperCase() !== "JOGADOR") {
-                                    resultados.push({
-                                        nome: nome,
-                                        fpp_id: licenca,
-                                        pontos_fpp: pontosLimpos,
-                                        updated_at: new Date().toISOString()
-                                    });
-                                }
-                            }
+                    // Limpeza preventiva da tabela de jogadores anterior (evita ler lixo se o site for lento)
+                    await page.evaluate(() => {
+                        document.querySelectorAll('table.rgMasterTable').forEach(t => {
+                            if (t.innerText.toUpperCase().includes('LICEN')) t.remove();
                         });
                     });
 
-                    return resultados;
+                    await page.evaluate((id) => {
+                        const btn = document.getElementById(id);
+                        if (btn) btn.click();
+                    }, eq.botaoId);
+
+                    await new Promise(r => setTimeout(r, 5000));
+
+                    // Extração do plantel (Tua lógica exata)
+                    const plantel = await page.evaluate(() => {
+                        const resultados = [];
+                        const grids = document.querySelectorAll('table.rgMasterTable');
+                        grids.forEach(table => {
+                            const ths = Array.from(table.querySelectorAll('th'));
+                            if (ths.length === 0) return;
+                            let idxL = -1, idxN = -1, idxP = -1;
+                            ths.forEach((th, index) => {
+                                const text = th.innerText.toUpperCase().trim();
+                                if (text.includes('LICEN')) idxL = index;
+                                if (text === 'NOME' || text.includes('JOGADOR')) idxN = index;
+                                if (text.includes('PONTOS')) idxP = index;
+                            });
+                            if (idxL === -1) idxL = 0; if (idxN === -1) idxN = 1;
+
+                            table.querySelectorAll('tbody tr').forEach(tr => {
+                                if (tr.classList.contains('rgHeader') || tr.classList.contains('rgPager')) return;
+                                const tds = tr.querySelectorAll('td');
+                                if (tds.length > 2) {
+                                    const licenca = tds[idxL]?.innerText.trim();
+                                    const nome = tds[idxN]?.innerText.trim();
+                                    let pts = 0;
+                                    if (idxP !== -1 && tds[idxP]) {
+                                        pts = parseFloat(tds[idxP].innerText.trim().replace(/\./g, '').replace(',', '.')) || 0;
+                                    } else {
+                                        for (let i = tds.length - 1; i >= 2; i--) {
+                                            const val = tds[i].innerText.trim();
+                                            if (/^[0-9]+[.,][0-9]+$/.test(val) || /^[0-9]+$/.test(val)) {
+                                                pts = parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (/^\d+$/.test(licenca) && nome && nome.toUpperCase() !== "JOGADOR") {
+                                        resultados.push({ nome, fpp_id: licenca, pontos_fpp: pts, updated_at: new Date().toISOString() });
+                                    }
+                                }
+                            });
+                        });
+                        return resultados;
+                    });
+
+                    if (plantel.length > 0) {
+                        await upsertJogadores(plantel, idEquipaDB);
+                        console.log(`      ✅ ${plantel.length} jogadores atualizados.`);
+                    }
+                }
+
+                // 🚀 CLIQUE NA PRÓXIMA PÁGINA
+                const clicou = await page.evaluate(() => {
+                    const nextBtn = document.querySelector('input.rgPageNext');
+                    if (nextBtn && !nextBtn.classList.contains('rgDisabled')) {
+                        nextBtn.click();
+                        return true;
+                    }
+                    return false;
                 });
 
-                if (plantel.length > 0) {
-                    const sucesso = await upsertJogadores(plantel, idEquipaDB);
-                    if (sucesso) {
-                        console.log(`      ✅ ${plantel.length} jogadores atualizados e ligados à equipa!`);
+                if (clicou) {
+                    await new Promise(r => setTimeout(r, 6000)); // Espera o PostBack
+
+                    // Verifica se a página mudou de facto comparando a primeira equipa
+                    const primeiraEquipaDepois = await page.evaluate(() => {
+                        return document.querySelector('table[id*="grid_all_teams"] tbody td:nth-child(3)')?.innerText.trim();
+                    });
+
+                    if (primeiraEquipaAntes === primeiraEquipaDepois) {
+                        console.log("   🏁 Fim das páginas (Conteúdo repetido).");
+                        temProximaPagina = false;
+                    } else {
+                        paginaAtual++;
                     }
                 } else {
-                    console.log(`      ⚠️ Zero jogadores. (Botão não carregou, layout estranho, ou equipa vazia)`);
+                    temProximaPagina = false;
                 }
             }
+            // 🚀 FIM DA ALTERAÇÃO PARA PAGINAÇÃO
 
         } catch (err) {
             console.error(`   ❌ Erro na zona ${torneio.nome}:`, err.message);
         }
     }
 
-    console.log("\n🏁 Sincronização Terminada com Sucesso!");
+    console.log("\n🏁 Sincronização Terminada!");
     await browser.close();
 })();
