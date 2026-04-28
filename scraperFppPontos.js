@@ -283,7 +283,8 @@ async function upsertJogadores(plantel, idEquipaDB) {
                 // 🚀 CLIQUE NA PRÓXIMA PÁGINA
                 const clicou = await page.evaluate(() => {
                     const nextBtn = document.querySelector('input.rgPageNext');
-                    if (nextBtn && !nextBtn.classList.contains('rgDisabled')) {
+                    // Verifica se o botão existe e não está desativado pelo Telerik
+                    if (nextBtn && !nextBtn.classList.contains('rgDisabled') && !nextBtn.disabled) {
                         nextBtn.click();
                         return true;
                     }
@@ -291,18 +292,30 @@ async function upsertJogadores(plantel, idEquipaDB) {
                 });
 
                 if (clicou) {
-                    await new Promise(r => setTimeout(r, 6000)); // Espera o PostBack
+                    console.log("   🔄 A aguardar o carregamento da próxima página...");
+                    try {
+                        // 🚀 A GRANDE CORREÇÃO: Em vez de esperar 6 segundos fixos,
+                        // fica a "espiar" a tabela até a primeira equipa mudar.
+                        // Se o site for rápido, muda logo. Se for lento, espera até 12 segundos.
+                        await page.waitForFunction(
+                            (nomeAnterior) => {
+                                const td = document.querySelector('table[id*="grid_all_teams"] tbody td:nth-child(3)');
+                                // Retorna TRUE mal o nome da equipa mude (ou seja, a página nova carregou)
+                                return td && td.innerText.trim() !== nomeAnterior;
+                            },
+                            { timeout: 12000 },
+                            primeiraEquipaAntes
+                        );
 
-                    // Verifica se a página mudou de facto comparando a primeira equipa
-                    const primeiraEquipaDepois = await page.evaluate(() => {
-                        return document.querySelector('table[id*="grid_all_teams"] tbody td:nth-child(3)')?.innerText.trim();
-                    });
-
-                    if (primeiraEquipaAntes === primeiraEquipaDepois) {
-                        console.log("   🏁 Fim das páginas (Conteúdo repetido).");
-                        temProximaPagina = false;
-                    } else {
+                        // Se a função acima não der erro, a página mudou com sucesso!
                         paginaAtual++;
+                        await new Promise(r => setTimeout(r, 2000)); // Margem para estabilizar as classes CSS
+
+                    } catch (e) {
+                        // Se passarem os 12 segundos e a primeira equipa for a mesma,
+                        // o bot percebe que o clique no "Next" não fez nada e encerra as páginas.
+                        console.log("   🏁 Fim das páginas alcançado.");
+                        temProximaPagina = false;
                     }
                 } else {
                     temProximaPagina = false;
