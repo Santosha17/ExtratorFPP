@@ -178,6 +178,7 @@ async function upsertJogadores(plantel, idEquipaDB) {
             // 🚀 INÍCIO DA ALTERAÇÃO PARA PAGINAÇÃO
             let temProximaPagina = true;
             let paginaAtual = 1;
+            let memoriaEquipasPaginaAnterior = ""; // 👈 NOVA VARIÁVEL (Memória)
 
             while (temProximaPagina) {
                 console.log(`   📄 Página ${paginaAtual}...`);
@@ -202,6 +203,18 @@ async function upsertJogadores(plantel, idEquipaDB) {
                     console.log("   ⚠️ Nenhuma equipa encontrada nesta página.");
                     break;
                 }
+
+                // 🚀 NOVA VERIFICAÇÃO ANTI-LOOP (À Prova de Bala)
+                // Cria uma "impressão digital" (hash) com os nomes das equipas desta página
+                const hashDestaPagina = linhasEquipas.map(eq => eq.nomeEquipa).join('|');
+
+                if (hashDestaPagina === memoriaEquipasPaginaAnterior) {
+                    console.log("   🛑 LOOP TRAVADO: O site não mudou de página (Fake Reload). Fim da zona!");
+                    break; // Sai do while imediatamente
+                }
+
+                // Guarda a "impressão digital" para comparar na próxima volta
+                memoriaEquipasPaginaAnterior = hashDestaPagina;
 
                 // Guardamos o nome da primeira equipa para comparar depois do clique
                 const primeiraEquipaAntes = linhasEquipas[0].nomeEquipa;
@@ -296,25 +309,22 @@ async function upsertJogadores(plantel, idEquipaDB) {
                     try {
                         // 🚀 A GRANDE CORREÇÃO: Em vez de esperar 6 segundos fixos,
                         // fica a "espiar" a tabela até a primeira equipa mudar.
-                        // Se o site for rápido, muda logo. Se for lento, espera até 12 segundos.
                         await page.waitForFunction(
                             (nomeAnterior) => {
                                 const td = document.querySelector('table[id*="grid_all_teams"] tbody td:nth-child(3)');
-                                // Retorna TRUE mal o nome da equipa mude (ou seja, a página nova carregou)
+                                // Retorna TRUE mal o nome da equipa mude
                                 return td && td.innerText.trim() !== nomeAnterior;
                             },
                             { timeout: 12000 },
                             primeiraEquipaAntes
                         );
 
-                        // Se a função acima não der erro, a página mudou com sucesso!
                         paginaAtual++;
                         await new Promise(r => setTimeout(r, 2000)); // Margem para estabilizar as classes CSS
 
                     } catch (e) {
-                        // Se passarem os 12 segundos e a primeira equipa for a mesma,
-                        // o bot percebe que o clique no "Next" não fez nada e encerra as páginas.
-                        console.log("   🏁 Fim das páginas alcançado.");
+                        // Se passarem os 12 segundos e a primeira equipa for a mesma
+                        console.log("   🏁 O tempo esgotou ou a página não mudou.");
                         temProximaPagina = false;
                     }
                 } else {
