@@ -1,14 +1,5 @@
 require('dotenv').config();
-const browser = await puppeteer.launch({
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome',
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage', // Crucial para não crashar em servidores pequenos
-        '--disable-gpu'
-    ],
-    headless: 'new' // Garante que corre sem interface gráfica
-});
+const puppeteer = require('puppeteer'); // Faltava o import do puppeteer no teu excerto
 
 // Resolve o erro "fetch is not a function" em qualquer versão do Node
 const fetch = globalThis.fetch || require('node-fetch');
@@ -155,10 +146,18 @@ async function upsertJogadores(plantel, idEquipaDB) {
     console.log("🚀 Iniciando Motor de Sincronização ScoreNacional...");
     await carregarEquipas();
 
+    // 🚀 AQUI ESTÃO AS CONFIGURAÇÕES DO RAILWAY INTEGRADAS NO TEU MOTOR
     const browser = await puppeteer.launch({
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome',
         headless: "new",
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage', // Crucial para o Railway
+            '--disable-gpu'
+        ]
     });
+
     const page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
 
