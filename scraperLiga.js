@@ -1,5 +1,17 @@
 require('dotenv').config();
-const puppeteer = require('puppeteer');
+const browser = await puppeteer.launch({
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome',
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', // Crucial para não crashar em servidores pequenos
+        '--disable-gpu'
+    ],
+    headless: 'new' // Garante que corre sem interface gráfica
+});
+
+// Resolve o erro "fetch is not a function" em qualquer versão do Node
+const fetch = globalThis.fetch || require('node-fetch');
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
 const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
