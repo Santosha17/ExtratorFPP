@@ -1,11 +1,14 @@
 require('dotenv').config();
 const puppeteer = require('puppeteer');
+
+// Resolve o erro "fetch is not a function" em qualquer versão do Node
 const fetch = globalThis.fetch || require('node-fetch');
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
 const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
+// --- LISTA DE TORNEIOS ---
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
     { nome: "Zona 1A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/71d3b007-c015-46b7-90de-181bc5e7f45d/Draws" },
@@ -49,8 +52,9 @@ const TORNEIOS_LIGA = [
 
 const mapaEquipas = {};
 
+// 1. Carregar IDs das equipas
 async function carregarEquipas() {
-    console.log("📥 [Liga] Mapeando IDs das equipas...");
+    console.log("📥 Mapeando IDs das equipas do Supabase (Busca Exaustiva)...");
     try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/equipas?select=id,nome,zona,tipo,categoria`, {
             headers: {
@@ -60,134 +64,280 @@ async function carregarEquipas() {
             }
         });
         const dados = await res.json();
-        if (!Array.isArray(dados)) return;
+        if (!Array.isArray(dados)) throw new Error("Resposta da DB não é um array");
+
         dados.forEach(e => {
             const cat = e.categoria ? e.categoria.toLowerCase().trim() : 'sem-categoria';
             const chave = `${e.nome}|${e.zona}|${e.tipo}|${cat}`.toLowerCase().trim();
             mapaEquipas[chave] = e.id;
         });
-        console.log(`✅ [Liga] ${Object.keys(mapaEquipas).length} equipas mapeadas.`);
+
+        console.log(`✅ ${Object.keys(mapaEquipas).length} equipas em memória.`);
     } catch (err) {
-        console.error("❌ [Liga] Erro ao carregar equipas:", err.message);
+        console.error("❌ Erro ao carregar equipas:", err.message);
     }
 }
 
+// 2. Enviar jogadores para o Supabase (CORRIGIDO: Pontos associados à equipa)
 async function upsertJogadores(plantel, idEquipaDB) {
     if (plantel.length === 0) return false;
-    const jogadores = plantel.map(j => ({ fpp_id: j.fpp_id, nome: j.nome, pontos_fpp: j.pontos_fpp, updated_at: j.updated_at }));
-    const ligacoes = plantel.map(j => ({ fpp_id: j.fpp_id, equipa_id: idEquipaDB, pontos_equipa: j.pontos_fpp }));
+
+    // 2.1 Dados do Jogador (Apenas para a tabela 'jogadores')
+    const jogadores = plantel.map(j => ({
+        fpp_id: j.fpp_id,
+        nome: j.nome,
+        pontos_fpp: j.pontos_fpp,
+        updated_at: j.updated_at
+    }));
+
+    // 2.2 Dados de Ligação (Para a tabela 'jogadores_equipas')
+    // 🚀 ADICIONADO: A coluna pontos_equipa captura o ranking para esta equipa específica
+    const ligacoes = plantel.map(j => ({
+        fpp_id: j.fpp_id,
+        equipa_id: idEquipaDB,
+        pontos_equipa: j.pontos_fpp
+    }));
 
     try {
-        await fetch(`${SUPABASE_URL}/rest/v1/jogadores?on_conflict=fpp_id`, {
+        // A) GRAVAR JOGADOR E PONTOS GLOBAIS
+        const resJogadores = await fetch(`${SUPABASE_URL}/rest/v1/jogadores?on_conflict=fpp_id`, {
             method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates'
+            },
             body: JSON.stringify(jogadores)
         });
-        await fetch(`${SUPABASE_URL}/rest/v1/jogadores_equipas?on_conflict=fpp_id,equipa_id`, {
+
+        if (!resJogadores.ok) throw new Error(await resJogadores.text());
+
+        // B) GRAVAR A LIGAÇÃO À EQUIPA E OS PONTOS ESPECÍFICOS DESSA EQUIPA
+        const resLigacoes = await fetch(`${SUPABASE_URL}/rest/v1/jogadores_equipas?on_conflict=fpp_id,equipa_id`, {
             method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates'
+            },
             body: JSON.stringify(ligacoes)
         });
+
+        if (!resLigacoes.ok) {
+            // Fallback elegante caso a DB ainda não tenha a constraint (fpp_id, equipa_id) criada
+            if (resLigacoes.status === 409 || (await resLigacoes.clone().text()).includes("conflict")) {
+                console.warn("   ⚠️ Conflito no on_conflict da tabela de ligação. Verifica as tuas Chaves Únicas na DB.");
+            } else {
+                throw new Error(await resLigacoes.text());
+            }
+        }
+
         return true;
     } catch (err) {
-        console.error("❌ [Liga] Erro Gravação:", err.message);
+        console.error("   ❌ Erro na Gravação DB:", err.message);
         return false;
     }
 }
 
-async function iniciarScraper() {
-    console.log("🚀 [Liga] Iniciando...");
+// --- MOTOR PRINCIPAL ---
+(async () => {
+    console.log("🚀 Iniciando Motor de Sincronização ScoreNacional...");
     await carregarEquipas();
 
     const browser = await puppeteer.launch({
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-        headless: "new"
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1366, height: 768 });
 
-    try {
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1366, height: 768 });
+    for (const torneio of TORNEIOS_LIGA) {
+        console.log(`\n==================================================`);
+        console.log(`🌍 ZONA: ${torneio.nome} | ${torneio.tipo}`);
+        console.log(`==================================================`);
 
-        for (const torneio of TORNEIOS_LIGA) {
-            console.log(`🌍 [Liga] ZONA: ${torneio.nome} | ${torneio.tipo}`);
+        try {
             await page.goto(torneio.url, { waitUntil: 'networkidle2', timeout: 60000 });
 
             const clicouEquipas = await page.evaluate(() => {
-                const target = Array.from(document.querySelectorAll('a, span, div.rtsLink')).find(el => el.innerText?.trim().toUpperCase() === 'EQUIPAS');
+                const elements = Array.from(document.querySelectorAll('a, span, div.rtsLink'));
+                const target = elements.find(el => el.innerText && el.innerText.trim().toUpperCase() === 'EQUIPAS');
                 if (target) { target.click(); return true; }
                 return false;
             });
 
-            if (!clicouEquipas) continue;
+            if (!clicouEquipas) {
+                console.log("   ⚠️ Aba 'EQUIPAS' não encontrada.");
+                continue;
+            }
+
             await new Promise(r => setTimeout(r, 4000));
 
+            // 🚀 INÍCIO DA ALTERAÇÃO PARA PAGINAÇÃO
             let temProximaPagina = true;
-            let memoriaAnterior = "";
+            let paginaAtual = 1;
+            let memoriaEquipasPaginaAnterior = ""; // 👈 NOVA VARIÁVEL (Memória)
 
             while (temProximaPagina) {
-                const linhas = await page.evaluate(() => {
-                    return Array.from(document.querySelectorAll('table[id*="grid_all_teams"] tbody tr'))
-                        .map(tr => ({
-                            nome: tr.querySelector('td:nth-child(3)')?.innerText.trim(),
-                            cat: tr.querySelector('td:nth-child(2)')?.innerText.trim(),
-                            btnId: tr.querySelector('a[mytitle="Ver Jogadores"]')?.id
-                        })).filter(e => e.btnId && e.nome);
+                console.log(`   📄 Página ${paginaAtual}...`);
+
+                // Mapear linhas de equipas da página atual
+                const linhasEquipas = await page.evaluate(() => {
+                    const rows = Array.from(document.querySelectorAll('table[id*="grid_all_teams"] tbody tr'));
+                    return rows.map(tr => {
+                        const btn = tr.querySelector('a[mytitle="Ver Jogadores"]');
+                        const seccaoTd = tr.querySelector('td:nth-child(2)');
+                        const equipaTd = tr.querySelector('td:nth-child(3)');
+
+                        return {
+                            nomeEquipa: equipaTd ? equipaTd.innerText.trim() : null,
+                            categoria: seccaoTd ? seccaoTd.innerText.trim() : null,
+                            botaoId: btn ? btn.id : null
+                        };
+                    }).filter(e => e.botaoId && e.nomeEquipa);
                 });
 
-                const hash = linhas.map(l => l.nome).join('|');
-                if (hash === memoriaAnterior) break;
-                memoriaAnterior = hash;
+                if (linhasEquipas.length === 0) {
+                    console.log("   ⚠️ Nenhuma equipa encontrada nesta página.");
+                    break;
+                }
 
-                for (const eq of linhas) {
-                    const chave = `${eq.nome}|${torneio.nome}|${torneio.tipo}|${eq.cat}`.toLowerCase().trim();
-                    const idDB = mapaEquipas[chave] || mapaEquipas[eq.nome.toLowerCase().trim()];
-                    if (!idDB) continue;
+                // 🚀 NOVA VERIFICAÇÃO ANTI-LOOP (À Prova de Bala)
+                // Cria uma "impressão digital" (hash) com os nomes das equipas desta página
+                const hashDestaPagina = linhasEquipas.map(eq => eq.nomeEquipa).join('|');
 
-                    await page.evaluate((id) => document.getElementById(id)?.click(), eq.btnId);
+                if (hashDestaPagina === memoriaEquipasPaginaAnterior) {
+                    console.log("   🛑 LOOP TRAVADO: O site não mudou de página (Fake Reload). Fim da zona!");
+                    break; // Sai do while imediatamente
+                }
+
+                // Guarda a "impressão digital" para comparar na próxima volta
+                memoriaEquipasPaginaAnterior = hashDestaPagina;
+
+                // Guardamos o nome da primeira equipa para comparar depois do clique
+                const primeiraEquipaAntes = linhasEquipas[0].nomeEquipa;
+
+                for (const eq of linhasEquipas) {
+                    const chaveProcurada = `${eq.nomeEquipa}|${torneio.nome}|${torneio.tipo}|${eq.categoria}`.toLowerCase().trim();
+                    let idEquipaDB = mapaEquipas[chaveProcurada] || mapaEquipas[eq.nomeEquipa.toLowerCase().trim()];
+
+                    if (!idEquipaDB) {
+                        console.log(`   ⏭️ Ignorada: [${eq.nomeEquipa}] (Não mapeada)`);
+                        continue;
+                    }
+
+                    console.log(`   👥 Lendo plantel: ${eq.nomeEquipa}`);
+
+                    // Limpeza preventiva da tabela de jogadores anterior (evita ler lixo se o site for lento)
+                    await page.evaluate(() => {
+                        document.querySelectorAll('table.rgMasterTable').forEach(t => {
+                            if (t.innerText.toUpperCase().includes('LICEN')) t.remove();
+                        });
+                    });
+
+                    await page.evaluate((id) => {
+                        const btn = document.getElementById(id);
+                        if (btn) btn.click();
+                    }, eq.botaoId);
+
                     await new Promise(r => setTimeout(r, 5000));
 
+                    // Extração do plantel (Tua lógica exata)
                     const plantel = await page.evaluate(() => {
-                        const res = [];
-                        document.querySelectorAll('table.rgMasterTable').forEach(table => {
-                            const ths = Array.from(table.querySelectorAll('th')).map(th => th.innerText.toUpperCase().trim());
-                            const idxL = ths.findIndex(t => t.includes('LICEN'));
-                            const idxN = ths.findIndex(t => t === 'NOME' || t.includes('JOGADOR'));
-                            const idxP = ths.findIndex(t => t.includes('PONTOS'));
+                        const resultados = [];
+                        const grids = document.querySelectorAll('table.rgMasterTable');
+                        grids.forEach(table => {
+                            const ths = Array.from(table.querySelectorAll('th'));
+                            if (ths.length === 0) return;
+                            let idxL = -1, idxN = -1, idxP = -1;
+                            ths.forEach((th, index) => {
+                                const text = th.innerText.toUpperCase().trim();
+                                if (text.includes('LICEN')) idxL = index;
+                                if (text === 'NOME' || text.includes('JOGADOR')) idxN = index;
+                                if (text.includes('PONTOS')) idxP = index;
+                            });
+                            if (idxL === -1) idxL = 0; if (idxN === -1) idxN = 1;
 
                             table.querySelectorAll('tbody tr').forEach(tr => {
+                                if (tr.classList.contains('rgHeader') || tr.classList.contains('rgPager')) return;
                                 const tds = tr.querySelectorAll('td');
                                 if (tds.length > 2) {
                                     const licenca = tds[idxL]?.innerText.trim();
                                     const nome = tds[idxN]?.innerText.trim();
-                                    const pts = parseFloat(tds[idxP]?.innerText.trim().replace(/\./g, '').replace(',', '.')) || 0;
+                                    let pts = 0;
+                                    if (idxP !== -1 && tds[idxP]) {
+                                        pts = parseFloat(tds[idxP].innerText.trim().replace(/\./g, '').replace(',', '.')) || 0;
+                                    } else {
+                                        for (let i = tds.length - 1; i >= 2; i--) {
+                                            const val = tds[i].innerText.trim();
+                                            if (/^[0-9]+[.,][0-9]+$/.test(val) || /^[0-9]+$/.test(val)) {
+                                                pts = parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0;
+                                                break;
+                                            }
+                                        }
+                                    }
                                     if (/^\d+$/.test(licenca) && nome && nome.toUpperCase() !== "JOGADOR") {
-                                        res.push({ nome, fpp_id: licenca, pontos_fpp: pts, updated_at: new Date().toISOString() });
+                                        resultados.push({ nome, fpp_id: licenca, pontos_fpp: pts, updated_at: new Date().toISOString() });
                                     }
                                 }
                             });
                         });
-                        return res;
+                        return resultados;
                     });
 
-                    if (plantel.length > 0) await upsertJogadores(plantel, idDB);
+                    if (plantel.length > 0) {
+                        await upsertJogadores(plantel, idEquipaDB);
+                        console.log(`      ✅ ${plantel.length} jogadores atualizados.`);
+                    }
                 }
 
-                const clicouProximo = await page.evaluate(() => {
-                    const btn = document.querySelector('input.rgPageNext');
-                    if (btn && !btn.classList.contains('rgDisabled')) { btn.click(); return true; }
+                // 🚀 CLIQUE NA PRÓXIMA PÁGINA
+                const clicou = await page.evaluate(() => {
+                    const nextBtn = document.querySelector('input.rgPageNext');
+                    // Verifica se o botão existe e não está desativado pelo Telerik
+                    if (nextBtn && !nextBtn.classList.contains('rgDisabled') && !nextBtn.disabled) {
+                        nextBtn.click();
+                        return true;
+                    }
                     return false;
                 });
-                if (!clicouProximo) break;
-                await new Promise(r => setTimeout(r, 4000));
-            }
-        }
-    } catch (err) {
-        console.error("❌ [Liga] Erro Crítico:", err.message);
-    } finally {
-        await browser.close();
-        console.log("🏁 [Liga] Finalizado.");
-    }
-}
 
-iniciarScraper();
+                if (clicou) {
+                    console.log("   🔄 A aguardar o carregamento da próxima página...");
+                    try {
+                        // 🚀 A GRANDE CORREÇÃO: Em vez de esperar 6 segundos fixos,
+                        // fica a "espiar" a tabela até a primeira equipa mudar.
+                        await page.waitForFunction(
+                            (nomeAnterior) => {
+                                const td = document.querySelector('table[id*="grid_all_teams"] tbody td:nth-child(3)');
+                                // Retorna TRUE mal o nome da equipa mude
+                                return td && td.innerText.trim() !== nomeAnterior;
+                            },
+                            { timeout: 12000 },
+                            primeiraEquipaAntes
+                        );
+
+                        paginaAtual++;
+                        await new Promise(r => setTimeout(r, 2000)); // Margem para estabilizar as classes CSS
+
+                    } catch (e) {
+                        // Se passarem os 12 segundos e a primeira equipa for a mesma
+                        console.log("   🏁 O tempo esgotou ou a página não mudou.");
+                        temProximaPagina = false;
+                    }
+                } else {
+                    temProximaPagina = false;
+                }
+            }
+            // 🚀 FIM DA ALTERAÇÃO PARA PAGINAÇÃO
+
+        } catch (err) {
+            console.error(`   ❌ Erro na zona ${torneio.nome}:`, err.message);
+        }
+    }
+
+    console.log("\n🏁 Sincronização Terminada!");
+    await browser.close();
+})();
