@@ -10,10 +10,6 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
     process.exit(1);
 }
 
-// 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO
-// Configurado para 8 (ideal para a máquina Oracle com 2 OCPUs e 32GB RAM)
-const MAX_CONCURRENCY = 8;
-
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
     { nome: "Zona 1A", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/71d3b007-c015-46b7-90de-181bc5e7f45d/Draws" },
@@ -55,77 +51,8 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
-// -----------------------------------------------------------------------------
-// 1. GERADOR DA FILA DE TAREFAS (103 Tarefas: Absolutos + Veteranos)
-// -----------------------------------------------------------------------------
-function gerarFilaDeTarefas() {
-    const tasks = [];
-    let idCounter = 1;
-
-    // =========================================================================
-    // 🏆 FASE 1: ABSOLUTOS
-    // =========================================================================
-
-    // JOB 1: ZONAS NORMAIS E RÁPIDAS
-    const zonasNormais = ["Zona 1A", "Zona 1B", "Zona 1C", "Zona 3A", "Zona 3B", "Zona 3C", "Zona 4A", "Zona 4B", "Zona 4C", "Zona 4D", "Zona 6B", "Zona 7A", "Zona 8A", "Zona 8B"];
-    for (const z of zonasNormais) {
-        tasks.push({ id: idCounter++, nomeJob: "JOB1_ABS_NORMAIS", zona: z, tipo: "Absolutos", categoria: null, grupo: null });
-    }
-
-    // JOB 2: ZONAS MÉDIAS (Divididas em M e F)
-    const zonasMedias = ["Zona 3D", "Zona 6A", "Zona 7B"];
-    const catMedias = ["Masculinos", "Femininos"];
-    for (const z of zonasMedias) {
-        for (const c of catMedias) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB2_ABS_MEDIAS", zona: z, tipo: "Absolutos", categoria: c, grupo: null });
-        }
-    }
-
-    // JOB 3: ZONAS 2 E 5 - CATEGORIAS LIGEIRAS
-    const zonasPesadas = ["Zona 2", "Zona 5"];
-    const catLigeiras = ["Femininos", "Masculinos 1", "Masculinos 2", "Masculinos 3"];
-    for (const z of zonasPesadas) {
-        for (const c of catLigeiras) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB3_ABS_LIGEIRAS", zona: z, tipo: "Absolutos", categoria: c, grupo: null });
-        }
-    }
-
-    // JOB 4: ZONAS 2 E 5 - M4, M5, M6 POR GRUPO
-    const catPesadas = ["Masculinos 4", "Masculinos 5", "Masculinos 6"];
-    const grupos = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E", "Grupo F", "Grupo G", "Grupo H", "Grupo I"];
-    for (const z of zonasPesadas) {
-        for (const c of catPesadas) {
-            for (const g of grupos) {
-                tasks.push({ id: idCounter++, nomeJob: "JOB4_ABS_GRUPOS", zona: z, tipo: "Absolutos", categoria: c, grupo: g });
-            }
-        }
-    }
-
-    // =========================================================================
-    // 🏅 FASE 2: VETERANOS
-    // =========================================================================
-
-    // JOB 5: VETERANOS - ZONAS NORMAIS E MÉDIAS
-    const zonasVeteranosNormais = [...zonasNormais, ...zonasMedias];
-    for (const z of zonasVeteranosNormais) {
-        tasks.push({ id: idCounter++, nomeJob: "JOB5_VET_NORMAIS", zona: z, tipo: "Veteranos", categoria: null, grupo: null });
-    }
-
-    // JOB 6: VETERANOS - ZONAS PESADAS (Zona 2 e Zona 5)
-    const catVeteranosBase = ["Masculinos", "Femininos"];
-    for (const z of zonasPesadas) {
-        for (const c of catVeteranosBase) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB6_VET_PESADAS", zona: z, tipo: "Veteranos", categoria: c, grupo: null });
-        }
-    }
-
-    return tasks; // Total de 103 Sub-Tarefas
-}
-
-// -----------------------------------------------------------------------------
-// 2. FUNÇÃO DO SUPABASE
-// -----------------------------------------------------------------------------
-async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
+// 🚀 NOVA FUNÇÃO: Agora recebe os Metadados do Encontro separados das Duplas!
+async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos) {
     let matchStatus = 'scheduled';
     if (meta.home_score !== null && meta.away_score !== null) matchStatus = 'completed';
 
@@ -148,7 +75,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             home_score: meta.home_score, away_score: meta.away_score
         };
 
-        // 2. GRAVA O ENCONTRO
+        // 2. GRAVA O ENCONTRO (Isto acontece sempre, mesmo que as duplas deem erro!)
         if (!matchesDb || matchesDb.length === 0) {
             const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
             const newMatch = await resCreateMatch.json();
@@ -160,7 +87,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
 
         if (!matchId || !jogosExtraidos || jogosExtraidos.length === 0) return;
 
-        // 3. GRAVA AS DUPLAS
+        // 3. GRAVA AS DUPLAS COM O PATCH CORRETO
         for (const r of jogosExtraidos) {
             if (!r.rubber_number) continue;
 
@@ -186,37 +113,28 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             }
         }
     } catch (error) {
-        console.error(`${prefix} ❌ Erro a atualizar dados no Supabase:`, error);
+        console.error("❌ Erro a atualizar dados no Supabase:", error);
     }
 }
 
-// -----------------------------------------------------------------------------
-// 3. MÁQUINA DE RASPAGEM (Executa UMA sub-tarefa, saltando os ignorados)
-// -----------------------------------------------------------------------------
-async function executarTarefaPuppeteer(task) {
-    const prefix = `[SUB-MÁQUINA ${task.id} | ${task.nomeJob}]`;
-    console.log(`${prefix} A arrancar: Zona=${task.zona} | Cat=${task.categoria || 'Todas'} | Grupo=${task.grupo || 'Todos'}`);
-
-    // Filtra para ir buscar apenas o URL da Zona pedida
-    const torneiosAlvo = TORNEIOS_LIGA.filter(t => t.nome === task.zona && t.tipo === task.tipo);
-
-    if (torneiosAlvo.length === 0) {
-        console.log(`${prefix} ⚠️ Torneio não encontrado. Abortando tarefa.`);
-        return;
-    }
-
+(async () => {
+    console.log("🚀 A iniciar a 'Aranha' PadelNetwork - Sincronização de Encontros...");
     const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'], defaultViewport: null });
     const page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
     try {
-        for (const torneio of torneiosAlvo) {
+        for (const torneio of TORNEIOS_LIGA) {
+            console.log(`\n==================================================`);
+            console.log(`🌍 A INICIAR EXTRAÇÃO: ${torneio.nome} | ${torneio.tipo}`);
+            console.log(`==================================================`);
+
             try {
                 await page.goto(torneio.url, { waitUntil: 'networkidle2' });
                 await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
             } catch (e) {
-                console.log(`${prefix}   ⚠️ O site não carregou ou esta Zona ainda não foi publicada. A saltar...`);
+                console.log(`   ⚠️ O site não carregou ou esta Zona ainda não foi publicada. A saltar...`);
                 continue;
             }
 
@@ -227,12 +145,7 @@ async function executarTarefaPuppeteer(task) {
             });
 
             for (const cat of categorias) {
-                // 🚀 IGNORA AS CATEGORIAS QUE NÃO PERTENCEM A ESTA SUB-MÁQUINA
-                if (task.categoria && !cat.nome.includes(task.categoria)) {
-                    continue;
-                }
-
-                console.log(`\n${prefix} 🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
+                console.log(`\n🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
                 try {
                     await page.goto(torneio.url, { waitUntil: 'networkidle2' });
                     await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
@@ -257,12 +170,7 @@ async function executarTarefaPuppeteer(task) {
                     const listaDeGrupos = grupos.length > 0 ? grupos : ["Fase Regular"];
 
                     for (const grupo of listaDeGrupos) {
-                        // 🚀 IGNORA OS GRUPOS QUE NÃO PERTENCEM A ESTA SUB-MÁQUINA
-                        if (task.grupo && !grupo.includes(task.grupo)) {
-                            continue;
-                        }
-
-                        console.log(`${prefix}    🔎 A procurar jogos em: ${grupo}...`);
+                        console.log(`   🔎 A procurar jogos em: ${grupo}...`);
                         if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
                             await Promise.all([
                                 page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
@@ -315,6 +223,7 @@ async function executarTarefaPuppeteer(task) {
                                 }
 
                                 if(home !== "Equipa Casa" && home !== "") {
+                                    // 🚀 SELETOR REFORMULADO: Foca no ID específico do botão de rubbers (os 3 traços)
                                     const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
                                     let temBotao = !!btnRubbers;
                                     let btnIdxToClick = temBotao ? indexDoBotao++ : -1;
@@ -338,12 +247,12 @@ async function executarTarefaPuppeteer(task) {
                             const isFuturo = dataDoJogo && dataDoJogo > agora;
 
                             if (!meta.temBotao || isFuturo) {
-                                console.log(`${prefix}       ⏳ ${meta.home} vs ${meta.away}: Agendado para ${meta.dataJogo}.`);
-                                await guardarNoSupabaseEmTempoReal(metaParaBD, [], prefix);
+                                console.log(`      ⏳ ${meta.home} vs ${meta.away}: Agendado para ${meta.dataJogo}.`);
+                                await guardarNoSupabaseEmTempoReal(metaParaBD, []);
                                 continue;
                             }
 
-                            console.log(`${prefix}       -> A processar: ${meta.home} vs ${meta.away}...`);
+                            console.log(`      -> A processar: ${meta.home} vs ${meta.away}...`);
 
                             await page.evaluate(() => {
                                 const grid = document.querySelector('table[id*="grid_rubbers"] tbody');
@@ -353,6 +262,7 @@ async function executarTarefaPuppeteer(task) {
                             await Promise.all([
                                 page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                 page.evaluate((idx) => {
+                                    // 🚀 CLIQUE REFORMULADO: Garante que clica apenas nos botões de rubbers (3 traços)
                                     const btns = document.querySelectorAll('a[id*="link_open_rubbers"]');
                                     if (btns[idx]) btns[idx].click();
                                 }, meta.btnIdxToClick)
@@ -363,14 +273,15 @@ async function executarTarefaPuppeteer(task) {
                             const jogosExtraidos = await page.evaluate(() => {
                                 const details = [];
 
+                                // 🚀 FUNÇÃO DE LIMPEZA ATUALIZADA
                                 const cleanText = (text) => {
                                     if (!text) return "";
                                     return text
-                                        .replace(/✔/g, '')
-                                        .replace(/\n/g, ' / ')
-                                        .replace(/\s+/g, ' ')
-                                        .replace(/\s*\/\s*\/\s*/g, ' / ')
-                                        .replace(/^[\s/]+|[\s/]+$/g, '')
+                                        .replace(/✔/g, '')             // Remove o checkmark
+                                        .replace(/\n/g, ' / ')         // Transforma quebra de linha em barra
+                                        .replace(/\s+/g, ' ')          // Remove espaços duplos
+                                        .replace(/\s*\/\s*\/\s*/g, ' / ') // Evita barras duplas //
+                                        .replace(/^[\s/]+|[\s/]+$/g, '') // 🎯 AQUI: Remove espaços ou barras no INÍCIO e no FIM
                                         .trim();
                                 };
 
@@ -382,6 +293,7 @@ async function executarTarefaPuppeteer(task) {
                                     if (rIndex !== -1 && rowTexts.length > rIndex + 3) {
                                         const rubberNum = parseInt(rowTexts[rIndex].replace('R', ''));
 
+                                        // Âncora no traço para não trocar as duplas
                                         let dashIndex = rowTexts.findIndex((t, idx) => idx > rIndex && t === '-');
                                         if (dashIndex === -1) dashIndex = rIndex + 3;
 
@@ -400,7 +312,7 @@ async function executarTarefaPuppeteer(task) {
                                 return details;
                             });
 
-                            await guardarNoSupabaseEmTempoReal(metaParaBD, jogosExtraidos, prefix);
+                            await guardarNoSupabaseEmTempoReal(metaParaBD, jogosExtraidos);
 
                             await page.evaluate(() => {
                                 const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
@@ -412,43 +324,5 @@ async function executarTarefaPuppeteer(task) {
                 } catch (catError) {}
             }
         }
-    } catch (err) {} finally {
-        await browser.close();
-        console.log(`${prefix} ✅ TAREFA CONCLUÍDA!`);
-    }
-}
-
-// -----------------------------------------------------------------------------
-// 4. MOTOR PRINCIPAL (Executa a fila controlando a concorrência)
-// -----------------------------------------------------------------------------
-(async () => {
-    console.log("🚀 A iniciar a 'Aranha' PadelNetwork com Sub-Máquinas...");
-
-    // Gera as tuas 103 tarefas exatas (Absolutos + Veteranos)
-    const filaDeTarefas = gerarFilaDeTarefas();
-    console.log(`📋 Total de Tarefas a executar: ${filaDeTarefas.length}`);
-    console.log(`⚙️ A arrancar com ${MAX_CONCURRENCY} browsers em simultâneo.\n`);
-
-    const emExecucao = [];
-
-    // Lança as tarefas limitadas pela concorrência
-    for (const task of filaDeTarefas) {
-        const p = executarTarefaPuppeteer(task).then(() => {
-            // Remove a tarefa da lista de "em execução" quando acabar
-            emExecucao.splice(emExecucao.indexOf(p), 1);
-        });
-
-        emExecucao.push(p);
-
-        // Se chegarmos ao limite de browsers abertos, esperamos que 1 feche antes de abrir outro
-        if (emExecucao.length >= MAX_CONCURRENCY) {
-            await Promise.race(emExecucao);
-        }
-    }
-
-    // Espera que as últimas tarefas pendentes terminem
-    await Promise.all(emExecucao);
-
-    console.log("\n🏆 TODO O SCRAPE FOI CONCLUÍDO COM SUCESSO!");
-    process.exit(0);
+    } catch (err) {} finally { await browser.close(); }
 })();
