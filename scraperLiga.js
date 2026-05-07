@@ -55,6 +55,28 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
+// 🚀 LER OS ARGUMENTOS DO TERMINAL (EX: node scraper.js --zona="Zona 1A" --tipo="Absolutos")
+const args = process.argv.slice(2);
+const getArg = (name) => {
+    const arg = args.find(a => a.startsWith(`--${name}=`));
+    return arg ? arg.split('=')[1] : null;
+};
+
+const FILTER_ZONA = getArg('zona');
+const FILTER_TIPO = getArg('tipo');
+const FILTER_CATEGORIA = getArg('categoria');
+const FILTER_GRUPO = getArg('grupo');
+
+// Filtra logo a lista base antes de abrir o browser
+let torneiosAlvo = TORNEIOS_LIGA;
+if (FILTER_TIPO) torneiosAlvo = torneiosAlvo.filter(t => t.tipo === FILTER_TIPO);
+if (FILTER_ZONA) torneiosAlvo = torneiosAlvo.filter(t => t.nome === FILTER_ZONA);
+
+if (torneiosAlvo.length === 0) {
+    console.log("⚠️ Nenhum torneio encontrado com os filtros fornecidos. A abortar.");
+    process.exit(0);
+}
+
 // -----------------------------------------------------------------------------
 // 1. GERADOR DA FILA DE TAREFAS (103 Tarefas: Absolutos + Veteranos)
 // -----------------------------------------------------------------------------
@@ -187,6 +209,33 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         }
     } catch (error) {
         console.error(`${prefix} ❌ Erro a atualizar dados no Supabase:`, error);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 🚀 NOVA FUNÇÃO: ATUALIZAR HEARTBEAT NO SUPABASE
+// -----------------------------------------------------------------------------
+async function atualizarHeartbeat() {
+    try {
+        const agora = new Date().toISOString();
+        const url = `${SUPABASE_URL}/rest/v1/scraper_status?id=eq.1`;
+        const res = await fetch(url, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ultima_execucao: agora })
+        });
+
+        if (res.ok) {
+            console.log(`\n[SISTEMA] ✅ Heartbeat atualizado com sucesso! (${new Date().toLocaleString('pt-PT')})`);
+        } else {
+            console.error(`\n[SISTEMA] ⚠️ Falha ao atualizar Heartbeat. Status: ${res.status}`);
+        }
+    } catch (error) {
+        console.error("\n[SISTEMA] ❌ Erro ao enviar Heartbeat:", error);
     }
 }
 
@@ -448,6 +497,9 @@ async function executarTarefaPuppeteer(task) {
 
     // Espera que as últimas tarefas pendentes terminem
     await Promise.all(emExecucao);
+
+    // 🚀 ENVIA O HEARTBEAT FINAL QUANDO TODAS AS MÁQUINAS TERMINAREM
+    await atualizarHeartbeat();
 
     console.log("\n🏆 TODO O SCRAPE FOI CONCLUÍDO COM SUCESSO!");
     process.exit(0);
