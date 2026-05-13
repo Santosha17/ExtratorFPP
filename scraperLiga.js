@@ -55,7 +55,7 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/8281b86b-4251-4751-ac33-68cd5aa3c37a/Draws" }
 ];
 
-// 🚀 LER OS ARGUMENTOS DO TERMINAL (EX: node scraper.js --zona="Zona 1A" --tipo="Absolutos")
+// 🚀 LER OS ARGUMENTOS DO TERMINAL
 const args = process.argv.slice(2);
 const getArg = (name) => {
     const arg = args.find(a => a.startsWith(`--${name}=`));
@@ -78,23 +78,17 @@ if (torneiosAlvo.length === 0) {
 }
 
 // -----------------------------------------------------------------------------
-// 1. GERADOR DA FILA DE TAREFAS (103 Tarefas: Absolutos + Veteranos)
+// 1. GERADOR DA FILA DE TAREFAS
 // -----------------------------------------------------------------------------
 function gerarFilaDeTarefas() {
     const tasks = [];
     let idCounter = 1;
 
-    // =========================================================================
-    // 🏆 FASE 1: ABSOLUTOS
-    // =========================================================================
-
-    // JOB 1: ZONAS NORMAIS E RÁPIDAS
     const zonasNormais = ["Zona 1A", "Zona 1B", "Zona 1C", "Zona 3A", "Zona 3B", "Zona 3C", "Zona 4A", "Zona 4B", "Zona 4C", "Zona 4D", "Zona 6B", "Zona 7A", "Zona 8A", "Zona 8B"];
     for (const z of zonasNormais) {
         tasks.push({ id: idCounter++, nomeJob: "JOB1_ABS_NORMAIS", zona: z, tipo: "Absolutos", categoria: null, grupo: null });
     }
 
-    // JOB 2: ZONAS MÉDIAS (Divididas em M e F)
     const zonasMedias = ["Zona 3D", "Zona 6A", "Zona 7B"];
     const catMedias = ["Masculinos", "Femininos"];
     for (const z of zonasMedias) {
@@ -103,7 +97,6 @@ function gerarFilaDeTarefas() {
         }
     }
 
-    // JOB 3: ZONAS 2 E 5 - CATEGORIAS LIGEIRAS
     const zonasPesadas = ["Zona 2", "Zona 5"];
     const catLigeiras = ["Femininos", "Masculinos 1", "Masculinos 2", "Masculinos 3"];
     for (const z of zonasPesadas) {
@@ -112,7 +105,6 @@ function gerarFilaDeTarefas() {
         }
     }
 
-    // JOB 4: ZONAS 2 E 5 - M4, M5, M6 POR GRUPO
     const catPesadas = ["Masculinos 4", "Masculinos 5", "Masculinos 6"];
     const grupos = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E", "Grupo F", "Grupo G", "Grupo H", "Grupo I"];
     for (const z of zonasPesadas) {
@@ -123,17 +115,11 @@ function gerarFilaDeTarefas() {
         }
     }
 
-    // =========================================================================
-    // 🏅 FASE 2: VETERANOS
-    // =========================================================================
-
-    // JOB 5: VETERANOS - ZONAS NORMAIS E MÉDIAS
     const zonasVeteranosNormais = [...zonasNormais, ...zonasMedias];
     for (const z of zonasVeteranosNormais) {
         tasks.push({ id: idCounter++, nomeJob: "JOB5_VET_NORMAIS", zona: z, tipo: "Veteranos", categoria: null, grupo: null });
     }
 
-    // JOB 6: VETERANOS - ZONAS PESADAS (Zona 2 e Zona 5)
     const catVeteranosBase = ["Masculinos", "Femininos"];
     for (const z of zonasPesadas) {
         for (const c of catVeteranosBase) {
@@ -141,7 +127,7 @@ function gerarFilaDeTarefas() {
         }
     }
 
-    return tasks; // Total de 103 Sub-Tarefas
+    return tasks;
 }
 
 // -----------------------------------------------------------------------------
@@ -154,13 +140,11 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
     try {
         let matchId;
 
-        // 1. RESOLVIDO O TIMEZONE: Procura SÓ pelas equipas e grupo. Sem data = sem bugs de UTC.
         let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&grupo=eq.${encodeURIComponent(meta.grupo)}&select=id`;
 
         const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();
 
-        // Formata a data para UTC forçado para o Supabase não chorar
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
 
         const payloadMatch = {
@@ -170,14 +154,30 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             home_score: meta.home_score, away_score: meta.away_score
         };
 
-        // 2. GRAVA O ENCONTRO
+        // 2. GRAVA O ENCONTRO (E AGORA AVISA!)
+        let dbSuccess = false;
+
         if (!matchesDb || matchesDb.length === 0) {
             const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
-            const newMatch = await resCreateMatch.json();
-            if (newMatch && newMatch.length > 0) matchId = newMatch[0].id;
+            if (resCreateMatch.ok) {
+                dbSuccess = true;
+                const newMatch = await resCreateMatch.json();
+                if (newMatch && newMatch.length > 0) matchId = newMatch[0].id;
+            } else {
+                console.error(`${prefix} 🚨 ERRO a INSERIR jogo na BD:`, await resCreateMatch.text());
+            }
         } else {
             matchId = matchesDb[0].id;
-            await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
+            const resUpdateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
+            if (resUpdateMatch.ok) {
+                dbSuccess = true;
+            } else {
+                console.error(`${prefix} 🚨 ERRO a ATUALIZAR jogo na BD:`, await resUpdateMatch.text());
+            }
+        }
+
+        if (dbSuccess) {
+            console.log(`${prefix}       [SUPABASE] ✅ Jogo guardado/atualizado!`);
         }
 
         if (!matchId || !jogosExtraidos || jogosExtraidos.length === 0) return;
@@ -240,13 +240,12 @@ async function atualizarHeartbeat() {
 }
 
 // -----------------------------------------------------------------------------
-// 3. MÁQUINA DE RASPAGEM (Executa UMA sub-tarefa, saltando os ignorados)
+// 3. MÁQUINA DE RASPAGEM
 // -----------------------------------------------------------------------------
 async function executarTarefaPuppeteer(task) {
     const prefix = `[SUB-MÁQUINA ${task.id} | ${task.nomeJob}]`;
     console.log(`${prefix} A arrancar: Zona=${task.zona} | Cat=${task.categoria || 'Todas'} | Grupo=${task.grupo || 'Todos'}`);
 
-    // Filtra para ir buscar apenas o URL da Zona pedida
     const torneiosAlvo = TORNEIOS_LIGA.filter(t => t.nome === task.zona && t.tipo === task.tipo);
 
     if (torneiosAlvo.length === 0) {
@@ -276,7 +275,6 @@ async function executarTarefaPuppeteer(task) {
             });
 
             for (const cat of categorias) {
-                // 🚀 IGNORA AS CATEGORIAS QUE NÃO PERTENCEM A ESTA SUB-MÁQUINA
                 if (task.categoria && !cat.nome.includes(task.categoria)) {
                     continue;
                 }
@@ -306,7 +304,6 @@ async function executarTarefaPuppeteer(task) {
                     const listaDeGrupos = grupos.length > 0 ? grupos : ["Fase Regular"];
 
                     for (const grupo of listaDeGrupos) {
-                        // 🚀 IGNORA OS GRUPOS QUE NÃO PERTENCEM A ESTA SUB-MÁQUINA
                         if (task.grupo && !grupo.includes(task.grupo)) {
                             continue;
                         }
@@ -468,37 +465,31 @@ async function executarTarefaPuppeteer(task) {
 }
 
 // -----------------------------------------------------------------------------
-// 4. MOTOR PRINCIPAL (Executa a fila controlando a concorrência)
+// 4. MOTOR PRINCIPAL
 // -----------------------------------------------------------------------------
 (async () => {
     console.log("🚀 A iniciar a 'Aranha' PadelNetwork com Sub-Máquinas...");
 
-    // Gera as tuas 103 tarefas exatas (Absolutos + Veteranos)
     const filaDeTarefas = gerarFilaDeTarefas();
     console.log(`📋 Total de Tarefas a executar: ${filaDeTarefas.length}`);
     console.log(`⚙️ A arrancar com ${MAX_CONCURRENCY} browsers em simultâneo.\n`);
 
     const emExecucao = [];
 
-    // Lança as tarefas limitadas pela concorrência
     for (const task of filaDeTarefas) {
         const p = executarTarefaPuppeteer(task).then(() => {
-            // Remove a tarefa da lista de "em execução" quando acabar
             emExecucao.splice(emExecucao.indexOf(p), 1);
         });
 
         emExecucao.push(p);
 
-        // Se chegarmos ao limite de browsers abertos, esperamos que 1 feche antes de abrir outro
         if (emExecucao.length >= MAX_CONCURRENCY) {
             await Promise.race(emExecucao);
         }
     }
 
-    // Espera que as últimas tarefas pendentes terminem
     await Promise.all(emExecucao);
 
-    // 🚀 ENVIA O HEARTBEAT FINAL QUANDO TODAS AS MÁQUINAS TERMINAREM
     await atualizarHeartbeat();
 
     console.log("\n🏆 TODO O SCRAPE FOI CONCLUÍDO COM SUCESSO!");
