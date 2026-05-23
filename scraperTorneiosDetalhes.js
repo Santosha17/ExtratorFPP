@@ -16,17 +16,7 @@ async function updateTorneioDetalhes(fpp_id, det) {
                 'Content-Type': 'application/json',
                 'Prefer': 'return=representation'
             },
-            body: JSON.stringify({
-                morada: det.morada,
-                juiz_arbitro: det.juiz,
-                premio_monetario: det.premio,
-                regulamento_url: det.regulamento,
-                piso: det.piso,
-                modalidade: det.modalidade,
-                telefone: det.telefone,
-                email: det.email,
-                updated_at: new Date().toISOString()
-            })
+            body: JSON.stringify(det)
         });
 
         if (!res.ok) throw new Error(await res.text());
@@ -37,63 +27,68 @@ async function updateTorneioDetalhes(fpp_id, det) {
 }
 
 (async () => {
-    console.log("📥 A buscar torneios pendentes de atualização...");
-
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/torneios?morada=is.null`, {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/torneios?clube_nome=is.null`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
     const torneiosParaAtualizar = await response.json();
 
-    if (torneiosParaAtualizar.length === 0) {
-        console.log("🎉 Tudo atualizado! Nada para fazer.");
-        return;
-    }
+    if (torneiosParaAtualizar.length === 0) return console.log("🎉 Tudo atualizado!");
 
     const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
     const page = await browser.newPage();
 
     for (const torneio of torneiosParaAtualizar) {
-        console.log(`🌍 A processar: ${torneio.nome}`);
-
         try {
             await page.goto(torneio.url_tiepadel, { waitUntil: 'networkidle2', timeout: 60000 });
+            await page.evaluate(() => document.querySelector('#link_menu_info')?.click());
+            await page.waitForFunction(() => document.querySelector(".img_loading")?.style.display === 'none', { timeout: 15000 });
 
-            // 1. Clicar no botão 'Informação'
-            await page.evaluate(() => {
-                const btn = document.querySelector('#link_menu_info');
-                if (btn) btn.click();
-            });
+            const data = await page.evaluate(() => {
+                const getTxt = (selector) => document.querySelector(selector)?.innerText?.trim() || null;
 
-            // 2. Esperar pelo carregamento (loader)
-            await page.waitForSelector(".img_loading");
-            await page.waitForFunction(() => document.querySelector(".img_loading").style.display === 'none', { timeout: 15000 });
-
-            // 3. Extrair os dados todos
-            const detalhes = await page.evaluate(() => {
-                const getText = (id) => document.getElementById(id)?.innerText.trim() || null;
-                const getAttr = (id, attr) => document.getElementById(id)?.getAttribute(attr) || null;
+                // Extração dos Quadros (Tabela)
+                const quadros = [];
+                document.querySelectorAll('table tr').forEach(row => {
+                    const cols = row.querySelectorAll('td');
+                    if (cols.length >= 3) {
+                        quadros.push({
+                            categoria: cols[0]?.innerText.trim(),
+                            insc_ate: cols[1]?.innerText.trim(),
+                            pag_ate: cols[2]?.innerText.trim()
+                        });
+                    }
+                });
 
                 return {
-                    morada: document.querySelector('[id*="lbl_address"]')?.innerText || "N/A",
-                    juiz: getText('lbl_info_details_header_referee'),
-                    premio: getText('lbl_info_details_header_prize_money'),
-                    regulamento: getAttr('link_info_details_header_factsheet', 'href'),
-                    piso: getText('lbl_info_details_header_surface'),
-                    modalidade: getText('lbl_info_details_header_sport'),
-                    telefone: document.querySelector('[id*="lbl_phone"]')?.innerText || null,
-                    email: document.querySelector('[id*="link_email"]')?.innerText || null
+                    // Detalhes Gerais
+                    juiz_arbitro: getTxt('#lbl_info_details_header_referee'),
+                    premio_monetario: getTxt('#lbl_info_details_header_prize_money'),
+                    regulamento_url: document.querySelector('#link_info_details_header_factsheet')?.getAttribute('href'),
+                    piso: getTxt('#lbl_info_details_header_surface'),
+                    modalidade: getTxt('#lbl_info_details_header_sport'),
+
+                    // Clube
+                    clube_nome: getTxt('#lbl_club_name'),
+                    clube_morada: getTxt('#lbl_club_address'),
+                    clube_telefone: getTxt('#lbl_club_phone'),
+                    clube_email: getTxt('#lbl_club_email'),
+
+                    // Organizador
+                    organizador_nome: getTxt('#lbl_organizer_name'),
+                    organizador_morada: getTxt('#lbl_organizer_address'),
+                    organizador_telefone: getTxt('#lbl_organizer_phone'),
+                    organizador_email: getTxt('#lbl_organizer_email'),
+
+                    quadros_data: quadros,
+                    updated_at: new Date().toISOString()
                 };
             });
 
-            // 4. Gravar no Supabase
-            await updateTorneioDetalhes(torneio.fpp_id, detalhes);
+            await updateTorneioDetalhes(torneio.fpp_id, data);
             await new Promise(r => setTimeout(r, 2000));
-
         } catch (err) {
-            console.error(`   ❌ Erro em ${torneio.nome}:`, err.message);
+            console.error(`❌ Erro ${torneio.nome}:`, err.message);
         }
     }
-
     await browser.close();
-    console.log("🏁 Sincronização terminada!");
 })();
