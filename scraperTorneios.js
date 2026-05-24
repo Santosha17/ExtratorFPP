@@ -6,6 +6,24 @@ const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 const URL_CALENDARIO = "https://tour.tiesports.com/fpp/calendar_(tournaments)";
 
+// 🚀 NOVA FUNÇÃO: Limpa a morada/clube para não duplicar cidades/distritos
+function limparMorada(morada) {
+    if (!morada || morada === "N/A") return "N/A";
+
+    if (morada.includes('Portugal')) {
+        const partes = morada.split('Portugal');
+        let moradaLimpa = partes[0].trim();
+
+        if (moradaLimpa.endsWith(',')) {
+            moradaLimpa = moradaLimpa.slice(0, -1).trim();
+        }
+
+        return moradaLimpa + ', Portugal';
+    }
+
+    return morada;
+}
+
 // Função para converter data do site para formato YYYY-MM-DD
 function parseDateRange(dateStr) {
     const months = {
@@ -33,7 +51,7 @@ function parseDateRange(dateStr) {
 
 async function upsertTorneios(torneios) {
     if (torneios.length === 0) return false;
-    console.log(`💾 A gravar ${torneios.length} torneios...`);
+    console.log(`💾 A tentar gravar ${torneios.length} torneios na base de dados...`);
 
     try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/torneios?on_conflict=fpp_id`, {
@@ -42,11 +60,17 @@ async function upsertTorneios(torneios) {
                 'apikey': SUPABASE_KEY,
                 'Authorization': `Bearer ${SUPABASE_KEY}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates'
+                'Prefer': 'resolution=merge-duplicates' // Faz update se já existir
             },
             body: JSON.stringify(torneios)
         });
-        if (!res.ok) throw new Error(await res.text());
+
+        if (!res.ok) {
+            const erroDB = await res.text();
+            throw new Error(erroDB);
+        }
+
+        console.log("   ✅ Sucesso! Torneios inseridos/atualizados com sucesso na base de dados.");
         return true;
     } catch (err) {
         console.error("   ❌ Erro na Gravação DB:", err.message);
@@ -81,10 +105,13 @@ async function upsertTorneios(torneios) {
                 // Pegamos a string da data que está visível na tabela
                 const dateRaw = tds[2].querySelector('.fa-calendar-alt')?.nextElementSibling?.innerText || "";
 
+                // Pegamos a morada/clube bruta
+                const clubeRaw = tds[2].querySelector('.fa-map-marker-alt')?.nextElementSibling?.innerText || "N/A";
+
                 resultados.push({
                     fpp_id: linkObj.href.split('/').pop(),
                     nome: linkObj.innerText.trim(),
-                    clube: tds[2].querySelector('.fa-map-marker-alt')?.nextElementSibling?.innerText || "N/A",
+                    _clube_raw: clubeRaw, // Passamos isto para fora para ser limpo no Node.js
                     tipo: tds[1].innerText.trim(),
                     total_masculinos: parseInt(maleText.replace('-','0')),
                     total_femininos: parseInt(femaleText.replace('-','0')),
@@ -97,11 +124,23 @@ async function upsertTorneios(torneios) {
             return resultados;
         });
 
-        // Processar datas antes de gravar
+        // 🚀 AQUI APLICAMOS A LIMPEZA (DATAS E MORADAS)
         const finalData = torneiosExtraidos.map(t => {
             const datas = parseDateRange(t._data_raw);
-            delete t._data_raw; // Removemos a string crua
-            return { ...t, data_inicio: datas.inicio, data_fim: datas.fim };
+
+            // Atribuímos os valores limpos
+            const payload = {
+                ...t,
+                data_inicio: datas.inicio,
+                data_fim: datas.fim,
+                clube: limparMorada(t._clube_raw) // Corta tudo o que está à direita de "Portugal"
+            };
+
+            // Removemos as propriedades temporárias (brutas)
+            delete payload._data_raw;
+            delete payload._clube_raw;
+
+            return payload;
         });
 
         if (finalData.length > 0) {
