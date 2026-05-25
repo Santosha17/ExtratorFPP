@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 const fetch = require('node-fetch');
 
 // CORREÇÃO: Tratamento robusto da importação do pdf-parse
-const pdfLibrary = require('pdf-parse');
+const pdfLibrary = require('pdf-parse-new');
 const pdf = (typeof pdfLibrary === 'function') ? pdfLibrary : pdfLibrary.default;
 
 const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
@@ -36,7 +36,6 @@ async function upsertTorneio(payload) {
         const { data: html } = await axios.get("https://fppadel.pt/formacao/calendario/");
         const $ = cheerio.load(html);
 
-        // Encontra o PDF
         const pdfUrl = $('a[href$=".pdf"]').first().attr('href');
         if (!pdfUrl) throw new Error("Não encontrei o PDF na página.");
 
@@ -44,33 +43,56 @@ async function upsertTorneio(payload) {
         const response = await axios.get(pdfUrl, { responseType: 'arraybuffer' });
 
         console.log("📖 A processar PDF...");
-        // Agora, com o tratamento acima, esta linha não dará erro
         const pdfData = await pdf(response.data);
-
         const lines = pdfData.text.split('\n');
 
         console.log("🤖 A processar torneios...");
 
+        // Mapeamento de meses em português para números
+        const meses = {
+            'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'MARCO': '03',
+            'ABRIL': '04', 'MAIO': '05', 'JUNHO': '06', 'JULHO': '07',
+            'AGOSTO': '08', 'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12'
+        };
+
+        let mesAtual = '01'; // Começa em Janeiro por defeito
+
         for (let line of lines) {
-            line = line.trim();
-            // Limpa aspas e divide por vírgula (formato comum de CSV dentro de PDFs)
-            const row = line.replace(/"/g, '').split(',');
+            line = line.replace(/"/g, '').trim();
+            if (line.length < 5) continue;
 
-            // Verifica se a linha tem dados (ex: a primeira coluna tem data "DD/MM")
-            if (row.length >= 3 && row[0].match(/\d{2}/)) {
+            // 1. Deteção de Mês: Verifica se a linha indica uma mudança de mês
+            const palavrasLinha = line.toUpperCase().split(' ');
+            if (meses[palavrasLinha[0]]) {
+                mesAtual = meses[palavrasLinha[0]];
+            }
 
-                const data = row[0];
-                const nome = row[2];
-                // Se a coluna 5 estiver vazia, usa a 3, ou um valor padrão
-                const local = row[5] || row[3] || "A definir";
+            // 2. Extração do Torneio
+            // Procura padrões como "FEVEREIRO 6 a 8 CIR JOV II Open Jovens Dezporvinte..."
+            // Ou "6 a 8 CIR JOV..."
+            const regexTorneio = /^(?:[A-ZÇ]+\s)?(\d{1,2})\s*(?:a|a|A|-)\s*\d{1,2}\s+(?:CIR|FPP|ABS|VET|JOV|LIGA|FOR|OR).*?\s+(?:CIR|FPP|ABS|VET|JOV|LIGA|FOR|OR)?\s*(.*?)(?:\sM\s*&\s*F|\sF\s*&\s*M|\sM\s*|\sF\s*|$)/;
+            const match = line.match(regexTorneio);
 
-                await upsertTorneio({
-                    fpp_id: nome.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-                    nome: nome.trim(),
-                    clube_nome: local.trim(),
-                    data_inicio: data.trim(),
-                    updated_at: new Date().toISOString()
-                });
+            if (match) {
+                const diaInicio = match[1].padStart(2, '0');
+                const nome = match[2].trim();
+
+                // Limpeza extra para evitar apanhar cabeçalhos perdidos
+                if(nome && nome.length > 5 && !nome.includes("M & F") && !nome.includes("The following table")) {
+
+                    // Formata a data para a base de dados (YYYY-MM-DD)
+                    const dataFormatada = `2026-${mesAtual}-${diaInicio}`;
+
+                    await upsertTorneio({
+                        fpp_id: nome.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 50),
+                        nome: nome,
+                        // No PDF é difícil extrair o clube de forma fiável nesta linha,
+                        // enviamos null e depois o teu outro scraper que vai ao link atualiza isto
+                        clube_nome: null,
+                        data_inicio: dataFormatada,
+                        updated_at: new Date().toISOString()
+                    });
+                }
             }
         }
         console.log("🏁 Sincronização concluída!");
