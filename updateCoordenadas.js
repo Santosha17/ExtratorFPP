@@ -4,59 +4,49 @@ const fetch = globalThis.fetch || require('node-fetch');
 const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
-async function obterCoordenadas(moradaOriginal) {
-    try {
-        const headers = { 'User-Agent': 'ScoreNacional_App_1.0' };
+async function obterCoordenadas(moradaOriginal, nomeClube) {
+    const headers = { 'User-Agent': 'TorneiosPadelBot/1.2' };
 
-        // 1. Extrair o Código Postal (agora suporta espaços ex: "2775 - 615")
-        const cpMatchRaw = moradaOriginal.match(/\d{4}\s*-\s*\d{3}/);
-        const cpMatch = cpMatchRaw ? cpMatchRaw[0].replace(/\s/g, '') : null;
-
-        // 2. Limpar a morada (Corta depois de Portugal e remove S/N, 1º-D, etc)
-        let moradaLimpa = moradaOriginal.split('Portugal')[0] + "Portugal";
-        moradaLimpa = moradaLimpa.replace(/S\/N/gi, '')
-            .replace(/,?\s*\d+º-[a-z]/gi, '')
-            .trim();
-
-        // --- TENTATIVA 1: Pesquisa pela morada limpa ---
-        let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(moradaLimpa)}`;
-        let res = await fetch(url, { headers });
-        let data = await res.json();
-
-        if (data && data.length > 0) {
-            return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-        }
-
-        // --- TENTATIVA 2: Falhou? Procurar só pelo Código Postal ---
-        if (cpMatch) {
-            console.log(`      ↪ Morada confusa. A forçar busca pelo Código Postal: ${cpMatch}...`);
-            url = `https://nominatim.openstreetmap.org/search?format=json&postalcode=${cpMatch}&country=Portugal`;
-            res = await fetch(url, { headers });
-            data = await res.json();
-
+    // Função auxiliar para não repetir o fetch
+    const tentarMapa = async (query) => {
+        try {
+            let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+            let res = await fetch(url, { headers });
+            let data = await res.json();
             if (data && data.length > 0) {
                 return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
             }
-        }
+        } catch (e) { }
+        return null;
+    };
 
-        // --- TENTATIVA 3: Último recurso, forçar "Pino na Cidade" ---
-        // Ex: Se a string acabar em "Oeiras", procura "Oeiras, Portugal"
-        const partes = moradaOriginal.split(',');
-        const cidade = partes[partes.length - 1].trim();
+    // 1. Limpeza agressiva da morada (tira o 1º-D, nº, S/N)
+    let moradaLimpa = moradaOriginal.split('Portugal')[0] + 'Portugal';
+    moradaLimpa = moradaLimpa
+        .replace(/n[ºo]\s*\d+/gi, '') // Tira nº1
+        .replace(/\d+º-[a-z]/gi, '')   // Tira 1º-D
+        .replace(/S\/N/gi, '')         // Tira S/N
+        .replace(/Complexo[a-zA-Z\sçãéíáóúàèìòù]+/gi, '') // Tira nomes de complexos que confundem o mapa
+        .trim();
 
-        if (cidade) {
-            console.log(`      ↪ A forçar busca apenas pela cidade: ${cidade}...`);
-            url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cidade + ', Portugal')}`;
-            res = await fetch(url, { headers });
-            data = await res.json();
+    // TENTATIVA 1: Morada Limpa
+    let coords = await tentarMapa(moradaLimpa);
+    if (coords) return coords;
 
-            if (data && data.length > 0) {
-                return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-            }
-        }
+    // TENTATIVA 2: A força do Código Postal (Salva 90% dos casos)
+    const cpMatch = moradaOriginal.match(/\d{4}\s*-\s*\d{3}/);
+    if (cpMatch) {
+        const cp = cpMatch[0].replace(/\s/g, ''); // Garante formato XXXX-XXX
+        console.log(`      ↪ A forçar busca pelo Código Postal: ${cp}...`);
+        coords = await tentarMapa(`${cp}, Portugal`);
+        if (coords) return coords;
+    }
 
-    } catch (e) {
-        console.error("Erro a contactar o mapa:", e);
+    // TENTATIVA 3: Nome do Clube
+    if (nomeClube) {
+        console.log(`      ↪ A forçar busca pelo Nome do Clube...`);
+        coords = await tentarMapa(`${nomeClube}, Portugal`);
+        if (coords) return coords;
     }
 
     return { lat: null, lng: null };
@@ -65,13 +55,24 @@ async function obterCoordenadas(moradaOriginal) {
 (async () => {
     console.log("🌍 A procurar torneios sem coordenadas...");
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/torneios?lat=is.null&morada=not.is.null&select=id,nome,morada`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    const queryUrl = `${SUPABASE_URL}/rest/v1/torneiosfpp?lat=is.null&clube_morada=not.is.null&select=id,nome,clube_nome,clube_morada`;
+
+    const res = await fetch(queryUrl, {
+        headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json'
+        }
     });
+
+    if (!res.ok) {
+        console.error("❌ Erro ao ligar ao Supabase:", await res.text());
+        return;
+    }
 
     const torneios = await res.json();
 
-    if (!torneios || torneios.length === 0) {
+    if (!Array.isArray(torneios) || torneios.length === 0) {
         return console.log("🎉 Todos os torneios já têm coordenadas!");
     }
 
@@ -80,15 +81,17 @@ async function obterCoordenadas(moradaOriginal) {
     for (const torneio of torneios) {
         console.log(`📍 A processar: ${torneio.nome}`);
 
-        const coords = await obterCoordenadas(torneio.morada);
+        // Passamos também o nome do clube para ajudar na busca
+        const coords = await obterCoordenadas(torneio.clube_morada, torneio.clube_nome);
 
         if (coords.lat && coords.lng) {
-            const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/torneios?id=eq.${torneio.id}`, {
+            const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/torneiosfpp?id=eq.${torneio.id}`, {
                 method: 'PATCH',
                 headers: {
                     'apikey': SUPABASE_KEY,
                     'Authorization': `Bearer ${SUPABASE_KEY}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
                 },
                 body: JSON.stringify({ lat: coords.lat, lng: coords.lng })
             });
@@ -99,12 +102,12 @@ async function obterCoordenadas(moradaOriginal) {
                 console.log(`   ❌ Erro a guardar no Supabase.`);
             }
         } else {
-            console.log(`   ⚠️ Desisto. Não encontrei no mapa de maneira nenhuma: ${torneio.morada}`);
+            console.log(`   ⚠️ Desisto. Não encontrei no mapa: ${torneio.clube_morada}`);
         }
 
-        // Delay de 1.5s obrigatório pelo OpenStreetMap
+        // Pausa obrigatória para não bloquear a API gratuita do OSM
         await new Promise(resolve => setTimeout(resolve, 1500));
     }
 
-    console.log("\n🏁 Atualização concluída! Falta pouco para o mapa ficar perfeito.");
+    console.log("\n🏁 Atualização de coordenadas concluída!");
 })();

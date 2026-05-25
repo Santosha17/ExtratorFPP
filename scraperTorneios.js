@@ -6,151 +6,118 @@ const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 const URL_CALENDARIO = "https://tour.tiesports.com/fpp/calendar_(tournaments)";
 
-// 🚀 NOVA FUNÇÃO: Limpa a morada/clube para não duplicar cidades/distritos
-function limparMorada(morada) {
-    if (!morada || morada === "N/A") return "N/A";
-
-    if (morada.includes('Portugal')) {
-        const partes = morada.split('Portugal');
-        let moradaLimpa = partes[0].trim();
-
-        if (moradaLimpa.endsWith(',')) {
-            moradaLimpa = moradaLimpa.slice(0, -1).trim();
-        }
-
-        return moradaLimpa + ', Portugal';
-    }
-
-    return morada;
-}
-
-// Função para converter data do site para formato YYYY-MM-DD
 function parseDateRange(dateStr) {
+    if (!dateStr) return { data_inicio: null, data_fim: null };
     const months = {
-        "jan": "01", "fev": "02", "mar": "03", "abr": "04", "mai": "05", "jun": "06",
-        "jul": "07", "ago": "08", "set": "09", "out": "10", "nov": "11", "dez": "12"
+        'jan': '01', 'fev': '02', 'mar': '03', 'abr': '04', 'mai': '05', 'jun': '06',
+        'jul': '07', 'ago': '08', 'set': '09', 'out': '10', 'nov': '11', 'dez': '12',
+        'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'abril': '04', 'maio': '05',
+        'junho': '06', 'julho': '07', 'agosto': '08', 'setembro': '09', 'outubro': '10',
+        'novembro': '11', 'dezembro': '12'
     };
+    const cleanStr = dateStr.toLowerCase().replace(' de ', ' ');
+    const parts = cleanStr.split(/ - | a /);
+    const lastPart = parts[parts.length - 1].trim().split(' ');
+    const year = lastPart[lastPart.length - 1];
+    const monthName = lastPart[lastPart.length - 2];
+    const month = months[monthName?.substring(0, 3)] || '01';
+    const dayStart = parts[0].trim().split(' ')[0].padStart(2, '0');
+    const dayEnd = (parts.length > 1) ? parts[1].trim().split(' ')[0].padStart(2, '0') : dayStart;
 
-    const currentYear = new Date().getFullYear();
-    const cleanStr = dateStr.toLowerCase().replace(/[^a-z0-9 -]/g, '');
-    const parts = cleanStr.split('-');
-
-    const toDate = (str) => {
-        const words = str.trim().split(' '); // ex: ["13", "mar"]
-        if (words.length < 2) return null;
-        const day = words[0].padStart(2, '0');
-        const month = months[words[1].substring(0, 3)] || "01";
-        return `${currentYear}-${month}-${day}`;
-    };
-
-    return {
-        inicio: toDate(parts[0]),
-        fim: parts.length > 1 ? toDate(parts[1]) : toDate(parts[0])
-    };
+    return { data_inicio: `${year}-${month}-${dayStart}`, data_fim: `${year}-${month}-${dayEnd}` };
 }
 
-async function upsertTorneios(torneios) {
-    if (torneios.length === 0) return false;
-    console.log(`💾 A tentar gravar ${torneios.length} torneios na base de dados...`);
+async function upsertTorneios(payload) {
+    const url = `${SUPABASE_URL}/rest/v1/torneiosfpp?on_conflict=fpp_id`;
+    const headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+    };
 
-    try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/torneios?on_conflict=fpp_id`, {
-            method: 'POST',
-            headers: {
-                'apikey': SUPABASE_KEY,
-                'Authorization': `Bearer ${SUPABASE_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates' // Faz update se já existir
-            },
-            body: JSON.stringify(torneios)
-        });
-
-        if (!res.ok) {
-            const erroDB = await res.text();
-            throw new Error(erroDB);
-        }
-
-        console.log("   ✅ Sucesso! Torneios inseridos/atualizados com sucesso na base de dados.");
-        return true;
-    } catch (err) {
-        console.error("   ❌ Erro na Gravação DB:", err.message);
-        return false;
-    }
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+    if (!res.ok) console.error(`❌ Erro DB:`, await res.text());
+    else console.log(`✅ Sucesso na gravação: ${payload.fpp_id}`);
 }
 
 (async () => {
     console.log("🚀 Iniciando Motor de Sincronização...");
     const browser = await puppeteer.launch({ headless: "new" });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1366, height: 768 });
+    const listaTorneios = new Map();
 
-    try {
-        await page.goto(URL_CALENDARIO, { waitUntil: 'networkidle2', timeout: 60000 });
-        console.log("   📄 A ler tabela...");
+    await page.goto(URL_CALENDARIO, { waitUntil: 'networkidle2' });
 
-        const torneiosExtraidos = await page.evaluate(() => {
-            const resultados = [];
-            const rows = Array.from(document.querySelectorAll('table.shop-table tbody tr'));
+    // FASE 1
+    for (let mes = 1; mes <= 12; mes++) {
+        console.log(`📅 Mês ${mes}/2026`);
+        await page.select('select[id="drop_filter_tournaments_year"]', '2026');
+        await page.select('select[id="drop_filter_tournaments_month"]', mes.toString());
+        await page.click('#btn_filter_tournaments');
+        await page.waitForNetworkIdle({ idleTime: 1000, timeout: 30000 });
 
-            rows.forEach(tr => {
+        const dados = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('table.shop-table tbody tr')).map(tr => {
                 const tds = tr.querySelectorAll('td');
-                if (tds.length < 3) return;
-
-                const linkObj = tds[2].querySelector('.product__name a');
-                if (!linkObj) return;
-
-                const maleText = tr.querySelector('[id*="lbl_count_male"]')?.innerText || "0";
-                const femaleText = tr.querySelector('[id*="lbl_count_female"]')?.innerText || "0";
-
-                // Pegamos a string da data que está visível na tabela
-                const dateRaw = tds[2].querySelector('.fa-calendar-alt')?.nextElementSibling?.innerText || "";
-
-                // Pegamos a morada/clube bruta
-                const clubeRaw = tds[2].querySelector('.fa-map-marker-alt')?.nextElementSibling?.innerText || "N/A";
-
-                resultados.push({
-                    fpp_id: linkObj.href.split('/').pop(),
-                    nome: linkObj.innerText.trim(),
-                    _clube_raw: clubeRaw, // Passamos isto para fora para ser limpo no Node.js
-                    tipo: tds[1].innerText.trim(),
-                    total_masculinos: parseInt(maleText.replace('-','0')),
-                    total_femininos: parseInt(femaleText.replace('-','0')),
-                    _data_raw: dateRaw, // Vamos processar isto fora do evaluate
-                    url_tiepadel: linkObj.href,
-                    status: "Importado",
-                    updated_at: new Date().toISOString()
-                });
-            });
-            return resultados;
+                if (tds.length < 3) return null;
+                const link = tds[2].querySelector('.product__name a');
+                return link ? { fpp_id: link.href.split('/').pop(), url_tiepadel: link.href, nome: link.innerText.trim() } : null;
+            }).filter(i => i);
         });
-
-        // 🚀 AQUI APLICAMOS A LIMPEZA (DATAS E MORADAS)
-        const finalData = torneiosExtraidos.map(t => {
-            const datas = parseDateRange(t._data_raw);
-
-            // Atribuímos os valores limpos
-            const payload = {
-                ...t,
-                data_inicio: datas.inicio,
-                data_fim: datas.fim,
-                clube: limparMorada(t._clube_raw) // Corta tudo o que está à direita de "Portugal"
-            };
-
-            // Removemos as propriedades temporárias (brutas)
-            delete payload._data_raw;
-            delete payload._clube_raw;
-
-            return payload;
-        });
-
-        if (finalData.length > 0) {
-            await upsertTorneios(finalData);
-        }
-
-    } catch (err) {
-        console.error(`   ❌ Erro:`, err.message);
+        dados.forEach(t => listaTorneios.set(t.fpp_id, t));
     }
 
+    // FASE 2
+    for (const t of Array.from(listaTorneios.values())) {
+        try {
+            await page.goto(t.url_tiepadel, { waitUntil: 'networkidle2', timeout: 60000 });
+            await page.evaluate(() => document.querySelector('#link_menu_info')?.click());
+            await page.waitForFunction(() => document.querySelector(".img_loading")?.style.display === 'none', { timeout: 10000 }).catch(() => {});
+
+            const detalhes = await page.evaluate(() => {
+                const getTxt = (sel) => document.querySelector(sel)?.innerText?.trim();
+
+                // CORREÇÃO: Usamos nextElementSibling para saltar para o div com os dados
+                const clubes = Array.from(document.querySelectorAll('h6'))
+                    .filter(h => h.innerText.includes('Informação do Clube'))
+                    .map(header => {
+                        const container = header.nextElementSibling;
+                        return container ? {
+                            nome: container.querySelector('a[id*="_link_name"]')?.innerText.trim(),
+                            morada: container.querySelector('span[id*="_lbl_address"]')?.innerText.trim(),
+                            telefone: container.querySelector('span[id*="_lbl_phone"]')?.innerText.trim(),
+                            email: container.querySelector('a[id*="_link_email"]')?.innerText.trim(),
+                            web: container.querySelector('a[id*="_link_website"]')?.href
+                        } : null;
+                    }).filter(c => c !== null);
+
+                return {
+                    raw_date: getTxt('#lbl_info_details_header_dates'),
+                    juiz_arbitro: getTxt('#lbl_info_details_header_referee'),
+                    premio_monetario: getTxt('#lbl_info_details_header_prize_money'),
+                    piso: getTxt('#lbl_info_details_header_surface'),
+                    modalidade: getTxt('#lbl_info_details_header_sport'),
+                    clubes_lista: JSON.stringify(clubes),
+                    // Dados "plana" para o updateCoordenadas ler facilmente
+                    clube_nome: clubes[0]?.nome || null,
+                    clube_morada: clubes[0]?.morada || null
+                };
+            });
+
+            const datas = parseDateRange(detalhes.raw_date);
+            delete detalhes.raw_date;
+
+            await upsertTorneios({
+                fpp_id: t.fpp_id,
+                nome: t.nome,
+                ...detalhes,
+                ...datas,
+                updated_at: new Date().toISOString()
+            });
+
+        } catch (e) { console.error(`Erro: ${t.nome}`, e.message); }
+    }
     await browser.close();
-    console.log("🏁 Processo encerrado.");
+    console.log("🏁 Sincronização Terminada!");
 })();
