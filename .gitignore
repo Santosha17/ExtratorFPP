@@ -1,4 +1,45 @@
+# Dependências / Pacotes
 node_modules/
-.idea/
-todos_os_jogos_scraper.json
+jspm_packages/
+web_modules/
+
+# Logs de Erros e Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Configurações Locais e Segredos
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Cache e Downloads de Ferramentas (como Puppeteer)
+.cache/
+.local-chromium/
+
+# IDEs e Editores de Texto
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+
+# Arquivos do Sistema Operacional
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Arquivos temporários e outputs de Scraping específicos do projeto
+todos_os_jogos_scraper.json
+*.log
