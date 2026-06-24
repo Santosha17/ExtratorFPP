@@ -3,8 +3,8 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 
-const SUPABASE_URL_CPC_APP = process.env.SUPABASE_URL_CPC_APP;
-const SUPABASE_KEY_CPC_APP = process.env.SUPABASE_KEY_CPC_APP;
+const SUPABASE_URL_CPC_APP_CPC_APP = process.env.SUPABASE_URL_CPC_APP_CPC_APP;
+const SUPABASE_KEY_CPC_APP = process.env.SUPABASE_KEY_CPC_APP_CPC_APP;
 
 
 const URL = "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Draws";
@@ -21,8 +21,8 @@ async function sincronizarComSupabase(jogos) {
     for (const jogo of jogos) {
         try {
             // 1. Procurar o ID do encontro principal (matches)
-            const urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogo.equipa_casa)}&away_team=eq.${encodeURIComponent(jogo.equipa_fora)}&select=id`;
-            const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+            const urlMatch = `${SUPABASE_URL_CPC_APP}/rest/v1/matches?home_team=eq.${encodeURIComponent(jogo.equipa_casa)}&away_team=eq.${encodeURIComponent(jogo.equipa_fora)}&select=id`;
+            const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY_CPC_APP, 'Authorization': `Bearer ${SUPABASE_KEY_CPC_APP}` } });
             const matchesDb = await resMatch.json();
 
             if (!matchesDb || matchesDb.length === 0) {
@@ -34,8 +34,8 @@ async function sincronizarComSupabase(jogos) {
             const matchId = matchesDb[0].id;
 
             // 2. Verificar se o detalhe da dupla (R1, R2, R3) já existe neste encontro
-            const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${jogo.rubber_number}&select=id,result,home_duo,away_duo`;
-            const resDetail = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+            const urlDetail = `${SUPABASE_URL_CPC_APP}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${jogo.rubber_number}&select=id,result,home_duo,away_duo`;
+            const resDetail = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY_CPC_APP, 'Authorization': `Bearer ${SUPABASE_KEY_CPC_APP}` } });
             const detailsDb = await resDetail.json();
 
             const payload = {
@@ -52,10 +52,10 @@ async function sincronizarComSupabase(jogos) {
 
                 // 3. Se já existe, verificamos se o resultado (ou nomes) mudaram
                 if (resultAntigo !== jogo.result || detailsDb[0].home_duo !== jogo.home_duo) {
-                    const urlUpdate = `${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`;
+                    const urlUpdate = `${SUPABASE_URL_CPC_APP}/rest/v1/match_details?id=eq.${detailId}`;
                     await fetch(urlUpdate, {
                         method: 'PATCH', // PATCH = Update parcial
-                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+                        headers: { 'apikey': SUPABASE_KEY_CPC_APP, 'Authorization': `Bearer ${SUPABASE_KEY_CPC_APP}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
                     atualizados++;
@@ -64,9 +64,9 @@ async function sincronizarComSupabase(jogos) {
                 }
             } else {
                 // 4. Se não existe, INSERE novo!
-                await fetch(`${SUPABASE_URL}/rest/v1/match_details`, {
+                await fetch(`${SUPABASE_URL_CPC_APP}/rest/v1/match_details`, {
                     method: 'POST',
-                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+                    headers: { 'apikey': SUPABASE_KEY_CPC_APP, 'Authorization': `Bearer ${SUPABASE_KEY_CPC_APP}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 inseridos++;
