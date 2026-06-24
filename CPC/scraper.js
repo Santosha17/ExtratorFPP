@@ -1,12 +1,13 @@
+require('dotenv').config({ path: '../.env' });
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
-// --- CONFIGURAÇÕES DO SUPABASE ---
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
-// ---------------------------------
 
-const URL = "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Matches";
+const SUPABASE_URL_CPC_APP = process.env.SUPABASE_URL_CPC_APP;
+const SUPABASE_KEY_CPC_APP = process.env.SUPABASE_KEY_CPC_APP;
+
+
+const URL = "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Draws";
 
 // Função Mágica para Sincronizar com o Supabase
 async function sincronizarComSupabase(jogos) {
