@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: '../.env' });
 const axios = require('axios');
 const pdf = require('pdf-parse-new');
 const cheerio = require('cheerio');
