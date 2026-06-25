@@ -3,8 +3,8 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 
-const SUPABASE_URL_CPC_APP_CPC_APP = process.env.SUPABASE_URL_CPC_APP_CPC_APP;
-const SUPABASE_KEY_CPC_APP = process.env.SUPABASE_KEY_CPC_APP_CPC_APP;
+const SUPABASE_URL_CPC_APP = process.env.SUPABASE_URL_CPC_APP;
+const SUPABASE_KEY_CPC_APP = process.env.SUPABASE_KEY_CPC_APP;
 
 
 const URL = "https://fpp.tiepadel.com/Tournaments/LigaMudum2026FaseRegularAbsZona4B/Draws";
