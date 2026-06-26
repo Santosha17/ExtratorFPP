@@ -197,6 +197,16 @@ async function extrairInfoDeTiepadel(url) {
             }
         }
 
+        // ⚠️ Ignorar as coordenadas por defeito do TieSports (Centro de Lisboa) 
+        // para forçar a pesquisa morada via OpenStreetMap Nominatim.
+        if (lat && lng) {
+            const isDefaultLisbon = (lat.toFixed(4) === '38.7223' && lng.toFixed(4) === '-9.1391');
+            if (isDefaultLisbon) {
+                lat = null;
+                lng = null;
+            }
+        }
+
         return {
             clube_nome,
             clube_morada,

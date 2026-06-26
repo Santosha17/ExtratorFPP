@@ -156,7 +156,7 @@ const headersSupabase = {
 
                         // 1. Casamento Exato (100% igual ignorando acentos/maiúsculas)
                         if (strDb === strScraped) {
-                            matchEncontrado = dbT.fpp_id;
+                            matchEncontrado = dbT;
                             matchIndex = i;
                             break;
                         }
@@ -172,10 +172,9 @@ const headersSupabase = {
                                 if (dbWords.includes(sw)) overlaps++;
                             }
 
-                            // Tem de partilhar 100% das palavras específicas de ambos os lados
                             const isMatch100 = (overlaps === dbWords.length) && (overlaps === scrapedWords.length);
                             if (isMatch100) {
-                                matchEncontrado = dbT.fpp_id;
+                                matchEncontrado = dbT;
                                 matchIndex = i;
                                 break;
                             }
@@ -185,7 +184,9 @@ const headersSupabase = {
             }
 
             if (matchEncontrado) {
-                t.fpp_id = matchEncontrado; 
+                t.fpp_id = matchEncontrado.fpp_id; 
+                // Restaurar o nome oficial do PDF! O tieSports costuma ter erros (ex: "º Open" em vez de "2º Open")
+                t.nome = matchEncontrado.nome; 
                 reconciliacoesCount++;
                 // 🛑 O TRUQUE: Remover este torneio da pool para não ser "casado" com outro!
                 // Assim garantimos matches 1-para-1 e evitamos o erro "cannot affect row a second time"
