@@ -21,8 +21,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
         args: ['--no-sandbox', '--disable-setuid-sandbox'] 
     }); 
     
-    const page = await browser.newPage();
     const urlFpp = 'https://tour.tiesports.com/fpp/weekly_rankings';
+    
     
     const categoriasParaExtrair = [
         { nome: 'Absolutos - Masculinos', target: 'repeater_rankings_top_10$ctl00$link_load_more_men' },
@@ -42,8 +42,10 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     for (const cat of categoriasParaExtrair) {
         console.log(`\n⏳ A extrair ranking completo para: ${cat.nome}...`);
-
+        
+        let page;
         try {
+            page = await browser.newPage();
             await page.goto(urlFpp, { waitUntil: 'networkidle2', timeout: 60000 });
             await page.waitForFunction(() => typeof Sys !== 'undefined' && Sys.WebForms && Sys.WebForms.PageRequestManager);
 
@@ -91,6 +93,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                             clube: null,
                             nivel: null,
                             qtd_torneios: null,
+                            localidade: null,
+                            mao: null,
                             torneios: []
                         };
                     }).filter(Boolean);
@@ -141,6 +145,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                                     nivel: tds.length > 6 ? tds[6].innerText.trim() : null,
                                     escalao: tds.length > 7 ? tds[7].innerText.trim() : null,
                                     qtd_torneios: tds.length > 8 ? parseInt(tds[8].innerText.trim(), 10) : 0,
+                                    localidade: null,
+                                    mao: null,
                                     torneios: []
                                 };
                             }
@@ -172,35 +178,60 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                             }, { timeout: 15000 });
                             await new Promise(r => setTimeout(r, 500)); // Animação do modal
                             
-                            const torneiosData = await page.evaluate(() => {
-                                // Procurar a tabela dentro de um painel ou modal de pontos
-                                const tables = document.querySelectorAll('table');
-                                // A tabela de pontos costuma ser a última adicionada ao DOM ou estar num panel
-                                let targetTable = tables.length > 1 ? tables[tables.length - 1] : null;
-                                // Verificar se é a tabela de torneios olhando para o header ou conteudo
-                                if (targetTable && targetTable.innerText.includes('Pontos')) {
-                                   // ok
+                            const playerExtraInfo = await page.evaluate(() => {
+                                const locationNode = document.querySelector('[id*="lbl_ranking_points_player_from"]');
+                                const handNode = document.querySelector('[id*="lbl_ranking_points_player_plays"]');
+                                
+                                const torneios = [];
+                                
+                                // Tab 1: Contabilizados
+                                const tableContabilizados = document.querySelector('#tab-ranking-points-countable-tournaments table');
+                                if (tableContabilizados) {
+                                    const trs = Array.from(tableContabilizados.querySelectorAll('tbody tr'));
+                                    trs.forEach(tr => {
+                                        const tds = tr.querySelectorAll('td');
+                                        if (tds.length >= 5) {
+                                            torneios.push({
+                                                nome_torneio: tds[0].innerText.trim(),
+                                                escalao_torneio: tds[1].innerText.trim(),
+                                                resultado: tds[2].innerText.trim(),
+                                                pontos: tds[3].innerText.trim(),
+                                                data_torneio: tds[4].innerText.trim(),
+                                                contabilizado: true
+                                            });
+                                        }
+                                    });
                                 }
                                 
-                                if (!targetTable) return [];
+                                // Tab 2: Não contabilizados
+                                const tableNaoContabilizados = document.querySelector('#tab-ranking-points-non-countable-tournaments table');
+                                if (tableNaoContabilizados) {
+                                    const trs = Array.from(tableNaoContabilizados.querySelectorAll('tbody tr'));
+                                    trs.forEach(tr => {
+                                        const tds = tr.querySelectorAll('td');
+                                        if (tds.length >= 5) {
+                                            torneios.push({
+                                                nome_torneio: tds[0].innerText.trim(),
+                                                escalao_torneio: tds[1].innerText.trim(),
+                                                resultado: tds[2].innerText.trim(),
+                                                pontos: tds[3].innerText.trim(),
+                                                data_torneio: tds[4].innerText.trim(),
+                                                contabilizado: false
+                                            });
+                                        }
+                                    });
+                                }
                                 
-                                const trs = Array.from(targetTable.querySelectorAll('tbody tr'));
-                                return trs.map(tr => {
-                                    const tds = tr.querySelectorAll('td');
-                                    if(tds.length >= 5) {
-                                        return {
-                                            nome_torneio: tds[0].innerText.trim(),
-                                            escalao_torneio: tds[1].innerText.trim(),
-                                            resultado: tds[2].innerText.trim(),
-                                            pontos: tds[3].innerText.trim(),
-                                            data_torneio: tds[4].innerText.trim()
-                                        };
-                                    }
-                                    return null;
-                                }).filter(Boolean);
+                                return {
+                                    localidade: locationNode ? locationNode.innerText.trim() : null,
+                                    mao: handNode ? handNode.innerText.trim() : null,
+                                    torneios: torneios
+                                };
                             });
                             
-                            pageData[i].torneios = torneiosData;
+                            pageData[i].localidade = playerExtraInfo.localidade;
+                            pageData[i].mao = playerExtraInfo.mao;
+                            pageData[i].torneios = playerExtraInfo.torneios;
                             
                             // Tentar fechar o modal/popup de pontos para não acumular
                             await page.addScriptTag({
@@ -305,6 +336,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                     clube: d.clube,
                     nivel: d.nivel,
                     qtd_torneios: d.qtd_torneios,
+                    localidade: d.localidade,
+                    mao: d.mao,
                     data_atualizacao: dataExtracao,
                     _torneios: d.torneios
                 };
@@ -335,11 +368,22 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                             resultado: t.resultado,
                             pontos: pts,
                             data_torneio: t.data_torneio,
+                            contabilizado: t.contabilizado,
                             data_atualizacao: dataExtracao
                         });
                     }
                 }
                 delete f._torneios; // Remove extra property before upsert
+            }
+            
+            const torneiosUnicos = [];
+            const torneiosVistos = new Set();
+            for (const t of torneiosParaInserir) {
+                const key = `${t.licenca}_${t.nome_torneio}_${t.escalao_torneio}_${t.data_atualizacao}`;
+                if (!torneiosVistos.has(key)) {
+                    torneiosVistos.add(key);
+                    torneiosUnicos.push(t);
+                }
             }
 
             console.log(`✅ Foram extraídos ${unicos.length} jogadores únicos em ${cat.nome}. A guardar no Supabase...`);
@@ -356,21 +400,25 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                 }
             }
             
-            if (torneiosParaInserir.length > 0) {
-                console.log(`✅ Foram extraídos ${torneiosParaInserir.length} torneios em ${cat.nome}. A guardar no Supabase...`);
+            if (torneiosUnicos.length > 0) {
+                console.log(`✅ Foram extraídos ${torneiosUnicos.length} torneios únicos em ${cat.nome}. A guardar no Supabase...`);
                 const { error: errTorneios } = await supabase
                     .from('rankingsfpp_torneios')
-                    .upsert(torneiosParaInserir, { onConflict: 'licenca, nome_torneio, escalao_torneio, data_atualizacao' });
+                    .upsert(torneiosUnicos, { onConflict: 'licenca, nome_torneio, escalao_torneio, data_atualizacao' });
 
                 if (errTorneios) {
                     console.error(`❌ Erro ao guardar torneios de ${cat.nome} no Supabase:`, errTorneios);
                 } else {
-                    console.log(`💾 Sucesso ao guardar ${torneiosParaInserir.length} torneios!`);
+                    console.log(`💾 Sucesso ao guardar ${torneiosUnicos.length} torneios!`);
                 }
             }
 
         } catch (err) {
             console.error(`❌ Erro geral ao extrair a categoria ${cat.nome}:`, err.message);
+        } finally {
+            if (page) {
+                await page.close().catch(e => console.log('Erro ao fechar página:', e.message));
+            }
         }
     }
 
