@@ -178,38 +178,41 @@ async function bulkInsert(tableName, dataArray) {
 
                                         const parentTd = scoreEl.closest('td');
                                         if (parentTd) {
-                                            // Extração da Data
-                                            const prevTd = parentTd.previousElementSibling;
-                                            if (prevTd) {
-                                                const dateSpan = prevTd.querySelector('.date');
-                                                if (dateSpan) dataHoraCampo = dateSpan.innerText.trim();
+                                            // Extração da Data/Hora - CORRIGIDO
+                                            let dateSpan = parentTd.querySelector('.date, .time, [id*="lbl_date"]');
+                                            if (!dateSpan && parentTd.previousElementSibling) {
+                                                dateSpan = parentTd.previousElementSibling.querySelector('.date, .time');
                                             }
-                                            if (!dataHoraCampo && parentTd.parentElement) {
-                                                const rowDateSpan = parentTd.parentElement.querySelector('.date');
-                                                if (rowDateSpan) dataHoraCampo = rowDateSpan.innerText.trim();
+                                            if (dateSpan) {
+                                                dataHoraCampo = dateSpan.innerText.trim();
                                             }
 
-                                            // Extração da RONDA (Hack de Coordenadas Visuais)
-                                            const table = parentTd.closest('table.new_draw');
-                                            if (table) {
-                                                const ths = Array.from(table.querySelectorAll('thead th'));
-                                                if (ths.length > 0) {
-                                                    const tdRect = parentTd.getBoundingClientRect();
-                                                    let minDiff = Infinity;
-                                                    let closestTh = ths[0];
+                                            // Extração da RONDA (Hack de Coordenadas Visuais Otimizado) - CORRIGIDO
+                                            const ths = Array.from(document.querySelectorAll('th, td.header-round, .round-header'));
+                                            const validThs = ths.filter(th => th.innerText && th.innerText.trim() !== '' && !th.innerText.includes('\n'));
 
-                                                    ths.forEach(th => {
-                                                        const thRect = th.getBoundingClientRect();
-                                                        const diff = Math.abs(thRect.left - tdRect.left);
-                                                        if (diff < minDiff) {
-                                                            minDiff = diff;
-                                                            closestTh = th;
-                                                        }
-                                                    });
-                                                    ronda = closestTh.innerText.trim() || 'Quadro Principal';
+                                            if (validThs.length > 0) {
+                                                const tdRect = parentTd.getBoundingClientRect();
+                                                let minDiff = Infinity;
+                                                let closestTh = validThs[0];
+
+                                                validThs.forEach(th => {
+                                                    const thRect = th.getBoundingClientRect();
+                                                    // Calculamos a distância ao centro da coluna (X)
+                                                    const thCenterX = thRect.left + (thRect.width / 2);
+                                                    const tdCenterX = tdRect.left + (tdRect.width / 2);
+                                                    const diff = Math.abs(thCenterX - tdCenterX);
+
+                                                    if (diff < minDiff && diff < 150) { // Tolerância de 150px
+                                                        minDiff = diff;
+                                                        closestTh = th;
+                                                    }
+                                                });
+
+                                                const extractedRound = closestTh.innerText.trim();
+                                                if (extractedRound && extractedRound !== "") {
+                                                    ronda = extractedRound;
                                                 }
-                                            } else {
-                                                ronda = 'Fase de Grupos';
                                             }
                                         }
 
