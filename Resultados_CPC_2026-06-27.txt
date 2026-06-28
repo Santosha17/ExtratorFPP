@@ -1,0 +1,40 @@
+Torneio: 10º Open Hospital Santa Maria Do Porto | Categoria: Femininos 2 (Quadro Principal) | Jogador: Inês Francisco | Parceiro: Desconhecido | FPP: 22285 | Ronda/Status: Quartos de final
+Torneio: 10º Open Hospital Santa Maria Do Porto | Categoria: Femininos 2 (Quadro Principal) | Jogador: Francisca Pereira | Parceiro: Catarina Teixeira | FPP: 21961 | Ronda/Status: Final (Finalista)
+Torneio: II Open WOW Padel | Categoria: Masculinos 2 (Quadro Principal) | Jogador: Renato Vieira | Parceiro: Diogo Oliveira | FPP: 22383 | Ronda/Status: Oitavos de final
+Torneio: II Open WOW Padel | Categoria: Masculinos 2 (Quadro Principal) | Jogador: Zé Maria Grilo | Parceiro: Bernardo Monteiro | FPP: 9096 | Ronda/Status: Final (Finalista)
+Torneio: II Open WOW Padel | Categoria: Masculinos 5 (Quadro Principal) | Jogador: João Santos | Parceiro: Luis Calixto | FPP: 15053 | Ronda/Status: Quartos de final
+Torneio: II Open WOW Padel | Categoria: Masculinos 5 (Quadro Principal) | Jogador: João Santos | Parceiro: Luis Calixto | FPP: 27482 | Ronda/Status: Quartos de final
+Torneio: II Open WOW Padel | Categoria: Masculinos 6 (Quadro Principal) | Jogador: Zé Miguel | Parceiro: Desconhecido | FPP: 27480 | Ronda/Status: Oitavos de final
+Torneio: II Open WOW Padel | Categoria: Masculinos 6 (Quadro Principal) | Jogador: Canina | Parceiro: Desconhecido | FPP: 27119 | Ronda/Status: 16-avos de final
+Torneio: II Open WOW Padel | Categoria: Masculinos 6 (Quadro Principal) | Jogador: Eduardo Morgado | Parceiro: Elvis Santos | FPP: 15610 | Ronda/Status: Oitavos de final
+Torneio: II Open WOW Padel | Categoria: Femininos 5 (Quadro Principal) | Jogador: Cristina Thiran | Parceiro: Diana Ferreira | FPP: 22528 | Ronda/Status: Oitavos de final
+Torneio: II Open WOW Padel | Categoria: Femininos 6 (Quadro Principal) | Jogador: Catarina Ferreira | Parceiro: Angélica Cruz | FPP: 28393 | Ronda/Status: Meias-Finais
+Torneio: IV Open Absolutos By Tasca Jota On Fire | Categoria: Masculinos 2 (Quadro Principal) | Jogador: Rodrigo Fortunato | Parceiro: André Gomes | FPP: 14791 | Ronda/Status: Fase de Grupos (Jogou 1 partidas)
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Masculinos 1 (Quadro Principal) | Jogador: Vasco Piussa | Parceiro: Gonçalo Valente | FPP: 12072 | Ronda/Status: Oitavos de final
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Masculinos 6 (Quadro Principal) | Jogador: Cláudio Leitão | Parceiro: Eduardo Morgado | FPP: 20290 | Ronda/Status: 16-avos de final
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Masculinos 6 (Quadro Principal) | Jogador: Eduardo Morgado | Parceiro: Desconhecido | FPP: 15610 | Ronda/Status: 16-avos de final
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Femininos 1 (Quadro Principal) | Jogador: Laura | Parceiro: Desconhecido | FPP: 23004 | Ronda/Status: Meias-Finais
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Femininos 2 (Quadro Principal) | Jogador: Carolina Reis | Parceiro: Sílvia Santos | FPP: 18637 | Ronda/Status: 🏆 Vencedor do Torneio!
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Femininos 2 (Quadro Principal) | Jogador: Filipa Silva | Parceiro: Desconhecido | FPP: 17984 | Ronda/Status: 🏆 Vencedor do Torneio!
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Femininos 3 (Quadro Principal) | Jogador: Neuza Barreto | Parceiro: Jess Jorge | FPP: 8447 | Ronda/Status: Oitavos de final
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Femininos 3 (Quadro Principal) | Jogador: Joana Tavares | Parceiro: Desconhecido | FPP: 27669 | Ronda/Status: Quartos de final
+Torneio: 7º Open Carlsberg Padel Cup'26 | Categoria: Femininos 5 (Quadro Principal) | Jogador: Laura | Parceiro: Desconhecido | FPP: 23004 | Ronda/Status: Oitavos de final
+Torneio: HeyDoc Campeonato Nacional De Pares Mistos | Categoria: Mistos 2 (Quadro Principal) | Jogador: Solange Barardo | Parceiro: Desconhecido | FPP: 19018 | Ronda/Status: Fase de Grupos (Jogou 2 partidas)
+Torneio: HeyDoc Campeonato Nacional De Pares Mistos | Categoria: Mistos 6 (Quadro Principal) | Jogador: Filipa Santos | Parceiro: Desconhecido | FPP: 17573 | Ronda/Status: Quartos de final
+Torneio: HeyDoc Campeonato Nacional De Pares Mistos | Categoria: Mistos 6 (Quadro Principal) | Jogador: Luis Ferreira | Parceiro: Desconhecido | FPP: 22336 | Ronda/Status: Meias-Finais
+Torneio: Portugal Master Padel | Categoria: Masculinos 2 (Quadro Principal) | Jogador: Zé Maria Grilo | Parceiro: Desconhecido | FPP: 9096 | Ronda/Status: Meias-Finais
+Torneio: Portugal Master Padel | Categoria: Masculinos 2 (Quadro Principal) | Jogador: Vasco Piussa | Parceiro: Desconhecido | FPP: 12072 | Ronda/Status: 16-avos de final
+Torneio: Portugal Master Padel | Categoria: Masculinos 3 (Quadro Principal) | Jogador: Renato Vieira | Parceiro: Domingos Garcia | FPP: 22383 | Ronda/Status: Oitavos de final
+Torneio: Portugal Master Padel | Categoria: Masculinos 4 (Quadro Principal) | Jogador: Nuno Rosa Roberto | Parceiro: Desconhecido | FPP: 15660 | Ronda/Status: 16-avos de final
+Torneio: Portugal Master Padel | Categoria: Femininos 2 (Quadro Principal) | Jogador: Francisca Pereira | Parceiro: Desconhecido | FPP: 21961 | Ronda/Status: Quartos de final
+Torneio: Portugal Master Padel | Categoria: Femininos 6 (Quadro Principal) | Jogador: Carina Fragoso | Parceiro: Bye			Joana Nunes Faustino | FPP: 27457 | Ronda/Status: Final (Finalista)
+Torneio: Portugal Master Padel | Categoria: Femininos 6 (Quadro Principal) | Jogador: Joana Nunes Faustino | Parceiro: Desconhecido | FPP: 33410 | Ronda/Status: Final (Finalista)
+Torneio: I MASTERS SUMMERS CUP | Categoria: Masculinos 3 (Quadro Principal) | Jogador: PP | Parceiro: Raul Serra | FPP: 17769 | Ronda/Status: Quartos de final
+Torneio: II Open Ultimate Urban Padel | Categoria: Masculinos 1 (Quadro Principal) | Jogador: Vasco Piussa | Parceiro: Ricardo Martins | FPP: 12072 | Ronda/Status: Oitavos de final
+Torneio: II Open Ultimate Urban Padel | Categoria: Masculinos 2 (Quadro Principal) | Jogador: Miguel Agapito | Parceiro: Desconhecido | FPP: 15585 | Ronda/Status: Quartos de final
+Torneio: II Open Ultimate Urban Padel | Categoria: Masculinos 2 (Quadro Principal) | Jogador: João Fiúza | Parceiro: João Gomes | FPP: 13289 | Ronda/Status: Oitavos de final
+Torneio: II Open Ultimate Urban Padel | Categoria: Masculinos 3 (Quadro Principal) | Jogador: Rodrigo Fortunato | Parceiro: Rafael Nunes | FPP: 14791 | Ronda/Status: Meias-Finais
+Torneio: II Open Ultimate Urban Padel | Categoria: Femininos 2 (Quadro Principal) | Jogador: Joana Tavares | Parceiro: Mafalda Machado | FPP: 27669 | Ronda/Status: Meias-Finais
+Torneio: II Open Ultimate Urban Padel | Categoria: Femininos 3 (Quadro Principal) | Jogador: Neuza Barreto | Parceiro: Bye		Mafalda Carracha | FPP: 8447 | Ronda/Status: Meias-Finais
+Torneio: II Open Ultimate Urban Padel | Categoria: Femininos 5 (Quadro Principal) | Jogador: Carla Rebelo | Parceiro: Carolina Andrade | FPP: 16672 | Ronda/Status: Quartos de final
+Torneio: II Open Ultimate Urban Padel | Categoria: Femininos 5 (Quadro Principal) | Jogador: Cristina Thiran | Parceiro: Desconhecido | FPP: 22528 | Ronda/Status: Quartos de final
