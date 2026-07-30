@@ -11,7 +11,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 }
 
 // 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO
-// Configurado para 8 (ideal para a máquina Oracle com 2 OCPUs e 32GB RAM)
+// Baixei para 8 por segurança (para não deitar abaixo o servidor da TiePadel). Podes testar 12.
 const MAX_CONCURRENCY = 8;
 
 const TORNEIOS_LIGA = [
@@ -135,7 +135,21 @@ function gerarFilaDeTarefas() {
 // -----------------------------------------------------------------------------
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
     let matchStatus = 'scheduled';
-    if (meta.home_score !== null && meta.away_score !== null) matchStatus = 'completed';
+
+    if (meta.home_score !== null && meta.away_score !== null) {
+        matchStatus = 'completed';
+    } else if (meta.data_jogo) {
+        const dataJogo = new Date(meta.data_jogo.replace(' ', 'T'));
+        const agora = new Date();
+
+        // Adiciona 24 horas (em milissegundos) à data do jogo para ter a janela de tolerância de submissão
+        const prazoLimite = new Date(dataJogo.getTime() + (24 * 60 * 60 * 1000));
+
+        // Se a data/hora atual já ultrapassou o prazo de 24h e não há resultados:
+        if (agora > prazoLimite) {
+            matchStatus = 'no_result';
+        }
+    }
 
     try {
         let matchId;
@@ -154,7 +168,6 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             home_score: meta.home_score, away_score: meta.away_score
         };
 
-        // 2. GRAVA O ENCONTRO (E AGORA AVISA!)
         let dbSuccess = false;
 
         if (!matchesDb || matchesDb.length === 0) {
@@ -182,7 +195,6 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
 
         if (!matchId || !jogosExtraidos || jogosExtraidos.length === 0) return;
 
-        // 3. GRAVA AS DUPLAS
         for (const r of jogosExtraidos) {
             if (!r.rubber_number) continue;
 
@@ -246,6 +258,24 @@ async function executarTarefaPuppeteer(task) {
     const prefix = `[SUB-MÁQUINA ${task.id} | ${task.nomeJob}]`;
     console.log(`${prefix} A arrancar: Zona=${task.zona} | Cat=${task.categoria || 'Todas'} | Grupo=${task.grupo || 'Todos'}`);
 
+    // 🔥 O AUTO-RETRY: Função que espera pacientemente se o site for lento! 🔥
+    const safeEvaluate = async (pageToEval, evaluateFn, ...args) => {
+        let lastError;
+        for (let i = 0; i < 4; i++) {
+            try {
+                return await pageToEval.evaluate(evaluateFn, ...args);
+            } catch (e) {
+                lastError = e;
+                if (e.message.includes("Execution context was destroyed") || e.message.includes("Target closed")) {
+                    await new Promise(r => setTimeout(r, 3500));
+                } else {
+                    throw e; // Se for outro erro qualquer, atira logo
+                }
+            }
+        }
+        throw lastError; // Se falhou 4 vezes seguidas, desiste e atira erro
+    };
+
     const torneiosAlvo = TORNEIOS_LIGA.filter(t => t.nome === task.zona && t.tipo === task.tipo);
 
     if (torneiosAlvo.length === 0) {
@@ -261,14 +291,14 @@ async function executarTarefaPuppeteer(task) {
     try {
         for (const torneio of torneiosAlvo) {
             try {
-                await page.goto(torneio.url, { waitUntil: 'networkidle2' });
-                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
+                await page.goto(torneio.url, { waitUntil: 'networkidle2', timeout: 20000 });
+                await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 15000 });
             } catch (e) {
                 console.log(`${prefix}   ⚠️ O site não carregou ou esta Zona ainda não foi publicada. A saltar...`);
                 continue;
             }
 
-            const categorias = await page.evaluate(() => {
+            const categorias = await safeEvaluate(page, () => {
                 const select = document.querySelector('#drop_tournaments');
                 if (!select) return [];
                 return Array.from(select.options).filter(opt => opt.value !== "0" && opt.innerText.trim() !== "").map(opt => ({ valor: opt.value, nome: opt.innerText.trim() }));
@@ -281,22 +311,32 @@ async function executarTarefaPuppeteer(task) {
 
                 console.log(`\n${prefix} 🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
                 try {
-                    await page.goto(torneio.url, { waitUntil: 'networkidle2' });
-                    await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
-                    await page.select('#drop_tournaments', cat.valor);
-                    await new Promise(r => setTimeout(r, 4000));
+                    // 🔥 MUDANÇA 1: Esperar pela NAVEGAÇÃO ao selecionar categoria
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                        page.select('#drop_tournaments', cat.valor).catch(() => {})
+                    ]);
+                    await new Promise(r => setTimeout(r, 2500)); // Pausa extra por segurança
 
-                    const clicouEncontros = await page.evaluate(() => {
+                    const temEncontros = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a, span, div'));
-                        const encontrosLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
-                        if (encontrosLink) { encontrosLink.click(); return true; }
-                        return false;
+                        return links.reverse().some(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
                     });
 
-                    if (!clicouEncontros) continue;
-                    await new Promise(r => setTimeout(r, 4000));
+                    if (!temEncontros) continue;
 
-                    const grupos = await page.evaluate(() => {
+                    // 🔥 MUDANÇA 2: Esperar pela NAVEGAÇÃO ao clicar em Encontros
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                        safeEvaluate(page, () => {
+                            const links = Array.from(document.querySelectorAll('a, span, div'));
+                            const btn = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
+                            if (btn) btn.click();
+                        }).catch(() => {})
+                    ]);
+                    await new Promise(r => setTimeout(r, 2500));
+
+                    const grupos = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a'));
                         return links.map(l => l.innerText.trim()).filter(text => text.includes("Grupo") || text === "Main");
                     });
@@ -304,155 +344,229 @@ async function executarTarefaPuppeteer(task) {
                     const listaDeGrupos = grupos.length > 0 ? grupos : ["Fase Regular"];
 
                     for (const grupo of listaDeGrupos) {
-                        if (task.grupo && !grupo.includes(task.grupo)) {
-                            continue;
-                        }
-
-                        console.log(`${prefix}    🔎 A procurar jogos em: ${grupo}...`);
-                        if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
-                            await Promise.all([
-                                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
-                                page.evaluate((nomeGrupo) => {
-                                    const links = Array.from(document.querySelectorAll('a'));
-                                    const target = links.find(l => l.innerText.trim() === nomeGrupo);
-                                    if (target) target.click();
-                                }, grupo)
-                            ]);
-                            await new Promise(r => setTimeout(r, 2000));
-                        }
-
-                        const metadadosJogos = await page.evaluate(() => {
-                            const arr = [];
-                            let indexDoBotao = 0;
-                            document.querySelectorAll('table tr').forEach((tr) => {
-                                const tds = Array.from(tr.querySelectorAll('td'));
-                                let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
-                                let matchScoreHome = null, matchScoreAway = null;
-
-                                const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
-                                if (dashIdx > 0) {
-                                    home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
-                                    away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
-                                }
-
-                                const scoreTd = tds.find(td => /\b[0-3]\s*-\s*[0-3]\b/.test(td.innerText));
-                                if (scoreTd) {
-                                    const parts = scoreTd.innerText.match(/\b([0-3])\s*-\s*([0-3])\b/);
-                                    if (parts) {
-                                        matchScoreHome = parseInt(parts[1]);
-                                        matchScoreAway = parseInt(parts[2]);
-                                    }
-                                }
-
-                                const dateRegex = /((\d{4}[-/]\d{2}[-/]\d{2})|(\d{2}[-/]\d{2}[-/]\d{4}))(?:[\s\S]*?(\d{2}:\d{2}))?/;
-
-                                for (let td of tds) {
-                                    const match = td.innerText.match(dateRegex);
-                                    if (match) {
-                                        let rawDate = match[1].replace(/\//g, '-');
-                                        const timePart = match[4] ? `${match[4]}:00` : `00:00:00`;
-                                        if (/^\d{2}-/.test(rawDate)) {
-                                            const parts = rawDate.split('-');
-                                            rawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-                                        }
-                                        dataJogo = `${rawDate} ${timePart}`;
-                                        break;
-                                    }
-                                }
-
-                                if(home !== "Equipa Casa" && home !== "") {
-                                    const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
-                                    let temBotao = !!btnRubbers;
-                                    let btnIdxToClick = temBotao ? indexDoBotao++ : -1;
-                                    arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick });
-                                }
-                            });
-                            return arr;
-                        });
-
-                        for (let i = 0; i < metadadosJogos.length; i++) {
-                            const meta = metadadosJogos[i];
-
-                            const metaParaBD = {
-                                zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: grupo,
-                                home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo,
-                                home_score: meta.matchScoreHome, away_score: meta.matchScoreAway
-                            };
-
-                            const agora = new Date();
-                            const dataDoJogo = meta.dataJogo ? new Date(meta.dataJogo.replace(' ', 'T')) : null;
-                            const isFuturo = dataDoJogo && dataDoJogo > agora;
-
-                            if (!meta.temBotao || isFuturo) {
-                                console.log(`${prefix}       ⏳ ${meta.home} vs ${meta.away}: Agendado para ${meta.dataJogo}.`);
-                                await guardarNoSupabaseEmTempoReal(metaParaBD, [], prefix);
+                        try {
+                            if (task.grupo && !grupo.includes(task.grupo)) {
                                 continue;
                             }
 
-                            console.log(`${prefix}       -> A processar: ${meta.home} vs ${meta.away}...`);
+                            console.log(`${prefix}    🔎 A procurar jogos em: ${grupo}...`);
+                            if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
+                                await Promise.all([
+                                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                                    safeEvaluate(page, (nomeGrupo) => {
+                                        const links = Array.from(document.querySelectorAll('a'));
+                                        const target = links.find(l => l.innerText.trim() === nomeGrupo);
+                                        if (target) target.click();
+                                    }, grupo)
+                                ]);
+                                await new Promise(r => setTimeout(r, 2500));
+                            }
 
-                            await page.evaluate(() => {
-                                const grid = document.querySelector('table[id*="grid_rubbers"] tbody');
-                                if (grid) grid.innerHTML = '';
-                            });
+                            const metadadosJogos = await safeEvaluate(page, () => {
+                                const arr = [];
+                                let indexDoBotao = 0;
+                                document.querySelectorAll('table tr').forEach((tr) => {
+                                    const tds = Array.from(tr.querySelectorAll('td'));
+                                    let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
+                                    let matchScoreHome = null, matchScoreAway = null;
 
-                            await Promise.all([
-                                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
-                                page.evaluate((idx) => {
-                                    const btns = document.querySelectorAll('a[id*="link_open_rubbers"]');
-                                    if (btns[idx]) btns[idx].click();
-                                }, meta.btnIdxToClick)
-                            ]);
+                                    const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
+                                    let homeWonByFC = false;
+                                    let awayWonByFC = false;
 
-                            await new Promise(r => setTimeout(r, 4500));
+                                    if (dashIdx > 0) {
+                                        const homeRaw = tds[dashIdx - 1].innerText.trim();
+                                        const awayRaw = tds[dashIdx + 1].innerText.trim();
+                                        home = homeRaw.replace(/✔/g, '').trim();
+                                        away = awayRaw.replace(/✔/g, '').trim();
 
-                            const jogosExtraidos = await page.evaluate(() => {
-                                const details = [];
+                                        if (homeRaw.includes('✔')) homeWonByFC = true;
+                                        if (awayRaw.includes('✔')) awayWonByFC = true;
+                                    }
 
-                                const cleanText = (text) => {
-                                    if (!text) return "";
-                                    return text
-                                        .replace(/✔/g, '')
-                                        .replace(/\n/g, ' / ')
-                                        .replace(/\s+/g, ' ')
-                                        .replace(/\s*\/\s*\/\s*/g, ' / ')
-                                        .replace(/^[\s/]+|[\s/]+$/g, '')
-                                        .trim();
-                                };
-
-                                document.querySelectorAll('table tr').forEach(row => {
-                                    const tds = Array.from(row.querySelectorAll('td'));
-                                    const rowTexts = tds.map(td => td.innerText.trim());
-                                    const rIndex = rowTexts.findIndex(txt => /^R\d$/.test(txt));
-
-                                    if (rIndex !== -1 && rowTexts.length > rIndex + 3) {
-                                        const rubberNum = parseInt(rowTexts[rIndex].replace('R', ''));
-
-                                        let dashIndex = rowTexts.findIndex((t, idx) => idx > rIndex && t === '-');
-                                        if (dashIndex === -1) dashIndex = rIndex + 3;
-
-                                        let homeDuo = cleanText(rowTexts[dashIndex - 1]);
-                                        let awayDuo = cleanText(rowTexts[dashIndex + 1]);
-
-                                        let scoreIndex = dashIndex + 2;
-                                        if (rowTexts[scoreIndex] === '✔' || rowTexts[scoreIndex] === '') scoreIndex++;
-                                        let score = cleanText(rowTexts[scoreIndex]);
-
-                                        if (rubberNum) {
-                                            details.push({ rubber_number: rubberNum, home_duo: homeDuo, away_duo: awayDuo, result: score });
+                                    const scoreTd = tds.find(td => /\b[0-3]\s*-\s*[0-3]\b/.test(td.innerText));
+                                    if (scoreTd) {
+                                        const parts = scoreTd.innerText.match(/\b([0-3])\s*-\s*([0-3])\b/);
+                                        if (parts) {
+                                            matchScoreHome = parseInt(parts[1]);
+                                            matchScoreAway = parseInt(parts[2]);
+                                        }
+                                    } else {
+                                        const fcTd = tds.find(td => /^(fc|w\.?o\.?|desist[êe]ncia)$/i.test(td.innerText.trim()));
+                                        if (fcTd) {
+                                            if (homeWonByFC) {
+                                                matchScoreHome = 3;
+                                                matchScoreAway = 0;
+                                            } else if (awayWonByFC) {
+                                                matchScoreHome = 0;
+                                                matchScoreAway = 3;
+                                            }
                                         }
                                     }
+
+                                    const dateRegex = /((\d{4}[-/]\d{2}[-/]\d{2})|(\d{2}[-/]\d{2}[-/]\d{4}))(?:[\s\S]*?(\d{2}:\d{2}))?/;
+
+                                    for (let td of tds) {
+                                        const match = td.innerText.match(dateRegex);
+                                        if (match) {
+                                            let rawDate = match[1].replace(/\//g, '-');
+                                            const timePart = match[4] ? `${match[4]}:00` : `00:00:00`;
+                                            if (/^\d{2}-/.test(rawDate)) {
+                                                const parts = rawDate.split('-');
+                                                rawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                                            }
+                                            dataJogo = `${rawDate} ${timePart}`;
+                                            break;
+                                        }
+                                    }
+
+                                    if(home !== "Equipa Casa" && home !== "") {
+                                        const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
+                                        let temBotao = !!btnRubbers;
+                                        let btnIdxToClick = temBotao ? indexDoBotao++ : -1;
+                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick });
+                                    }
                                 });
-                                return details;
+                                return arr;
                             });
 
-                            await guardarNoSupabaseEmTempoReal(metaParaBD, jogosExtraidos, prefix);
+                            for (let i = 0; i < metadadosJogos.length; i++) {
+                                const meta = metadadosJogos[i];
 
-                            await page.evaluate(() => {
-                                const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
-                                if (btn) btn.click();
-                            });
-                            await new Promise(r => setTimeout(r, 2000));
+                                try {
+                                    const metaParaBD = {
+                                        zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: grupo,
+                                        home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo,
+                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway
+                                    };
+
+                                    const agora = new Date();
+                                    const dataDoJogo = meta.dataJogo ? new Date(meta.dataJogo.replace(' ', 'T')) : null;
+                                    const isFuturo = dataDoJogo && dataDoJogo > agora;
+
+                                    if (!meta.temBotao || isFuturo) {
+                                        console.log(`${prefix}       ⏳ ${meta.home} vs ${meta.away}: Agendado para ${meta.dataJogo}.`);
+                                        await guardarNoSupabaseEmTempoReal(metaParaBD, [], prefix);
+                                        continue;
+                                    }
+
+                                    console.log(`${prefix}       -> A processar: ${meta.home} vs ${meta.away}...`);
+
+                                    await safeEvaluate(page, () => {
+                                        const grid = document.querySelector('table[id*="grid_rubbers"] tbody');
+                                        if (grid) grid.innerHTML = '';
+                                    });
+
+                                    await Promise.all([
+                                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                                        safeEvaluate(page, (idx) => {
+                                            const btns = document.querySelectorAll('a[id*="link_open_rubbers"]');
+                                            if (btns[idx]) btns[idx].click();
+                                        }, meta.btnIdxToClick)
+                                    ]);
+
+                                    await new Promise(r => setTimeout(r, 4500));
+
+                                    const jogosExtraidos = await safeEvaluate(page, () => {
+                                        const details = [];
+
+                                        const cleanText = (text) => {
+                                            if (!text) return "";
+                                            return text
+                                                .replace(/✔/g, '')
+                                                .replace(/\n/g, ' / ')
+                                                .replace(/\s+/g, ' ')
+                                                .replace(/\s*\/\s*\/\s*/g, ' / ')
+                                                .replace(/^[\s/]+|[\s/]+$/g, '')
+                                                .trim();
+                                        };
+
+                                        const isDate = (t) => /\d{2,4}[-/]\d{2}[-/]\d{2,4}/.test(t);
+                                        const isGarbage = (t) => t === '-' || t === '✔' || t === '';
+                                        const isCampo = (t) => {
+                                            const s = t.toLowerCase().trim();
+                                            return s === 'tba' || /^(campo|court|pista|corte)\s*\d+/.test(s);
+                                        };
+                                        const isScore = (t) => {
+                                            const s = t.toLowerCase().trim();
+                                            if (/^(w\.o\.|w\.o|fc|desistência|desistencia)$/.test(s)) return true;
+                                            // 🔥 ATUALIZADO: Agora permite parênteses curvos (), retos [] e vírgulas!
+                                            return /^[\d\s\-\/\(\)\[\],]+$/.test(s) && /\d/.test(s);
+                                        };
+
+                                        document.querySelectorAll('table tr').forEach(row => {
+                                            const cells = Array.from(row.querySelectorAll('td, th'));
+                                            const rowTexts = cells.map(cell => cell.innerText.trim());
+
+                                            const rIndex = rowTexts.findIndex(txt => /^R[1-3]$/.test(txt));
+
+                                            if (rIndex !== -1) {
+                                                const rubberNum = parseInt(rowTexts[rIndex].replace('R', ''));
+
+                                                let afterR = rowTexts.slice(rIndex + 1);
+                                                let cleaned = afterR.filter(t => !isDate(t) && !isGarbage(t) && !isCampo(t));
+
+                                                let homeRaw = '';
+                                                let awayRaw = '';
+                                                let scoreRaw = '';
+
+                                                let scoreIdx = -1;
+                                                for (let j = cleaned.length - 1; j >= 0; j--) {
+                                                    if (isScore(cleaned[j])) {
+                                                        scoreIdx = j;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if (scoreIdx !== -1) {
+                                                    scoreRaw = cleaned[scoreIdx];
+                                                    cleaned.splice(scoreIdx, 1);
+                                                }
+
+                                                if (cleaned.length >= 2) {
+                                                    homeRaw = cleaned[0];
+                                                    awayRaw = cleaned[1];
+                                                } else if (cleaned.length === 1) {
+                                                    homeRaw = cleaned[0];
+                                                }
+
+                                                let homeDuo = cleanText(homeRaw);
+                                                let awayDuo = cleanText(awayRaw);
+                                                let score = cleanText(scoreRaw);
+
+                                                if (homeDuo || awayDuo || score) {
+                                                    details.push({
+                                                        rubber_number: rubberNum,
+                                                        home_duo: homeDuo || 'A Definir',
+                                                        away_duo: awayDuo || 'A Definir',
+                                                        result: score
+                                                    });
+                                                }
+                                            }
+                                        });
+                                        return details;
+                                    });
+
+                                    await guardarNoSupabaseEmTempoReal(metaParaBD, jogosExtraidos, prefix);
+
+                                } catch (matchError) {
+                                    console.log(`${prefix}       ❌ Falha crítica (Abortar Jogo): ${matchError.message}`);
+                                } finally {
+                                    // 🔥 MUDANÇA 3: Esperar pela NAVEGAÇÃO ao VOLTAR
+                                    try {
+                                        await Promise.all([
+                                            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                                            safeEvaluate(page, () => {
+                                                const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
+                                                if (btn) btn.click();
+                                            })
+                                        ]);
+                                        await new Promise(r => setTimeout(r, 2500));
+                                    } catch(e) {}
+                                }
+                            }
+                        } catch (groupError) {
+                            console.log(`${prefix}    ❌ Falha num grupo (Avançando para o próximo): ${groupError.message}`);
                         }
                     }
                 } catch (catError) {}
@@ -470,7 +584,24 @@ async function executarTarefaPuppeteer(task) {
 (async () => {
     console.log("🚀 A iniciar a 'Aranha' PadelNetwork com Sub-Máquinas...");
 
-    const filaDeTarefas = gerarFilaDeTarefas();
+    let filaDeTarefas = gerarFilaDeTarefas();
+
+    // 🔥 APLICAR OS FILTROS DO TERMINAL ÀS TAREFAS 🔥
+    if (FILTER_ZONA) filaDeTarefas = filaDeTarefas.filter(t => t.zona === FILTER_ZONA);
+    if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo === FILTER_TIPO);
+
+    // Forçar a categoria e grupo na tarefa se o utilizador pedir pelo terminal
+    if (FILTER_CATEGORIA || FILTER_GRUPO) {
+        filaDeTarefas = filaDeTarefas.map(t => {
+            if (FILTER_CATEGORIA) t.categoria = FILTER_CATEGORIA;
+            if (FILTER_GRUPO) t.grupo = FILTER_GRUPO;
+            return t;
+        });
+
+        // Limpar tarefas repetidas apenas se os filtros foram aplicados
+        filaDeTarefas = [...new Map(filaDeTarefas.map(t => [t.zona + t.tipo + t.categoria + t.grupo, t])).values()];
+    }
+
     console.log(`📋 Total de Tarefas a executar: ${filaDeTarefas.length}`);
     console.log(`⚙️ A arrancar com ${MAX_CONCURRENCY} browsers em simultâneo.\n`);
 
