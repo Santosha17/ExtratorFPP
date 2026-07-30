@@ -623,6 +623,6 @@ async function executarTarefaPuppeteer(task) {
 
     await atualizarHeartbeat();
 
-    console.log("\n🏆 TODO O SCRAPE FOI CONCLUÍDO COM SUCESSO!");
+    console.log("\n🏆 TODO O SCRAPER FOI CONCLUÍDO COM SUCESSO!");
     process.exit(0);
 })();
