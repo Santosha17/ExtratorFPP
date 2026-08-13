@@ -1,3 +1,4 @@
+process.env.UV_THREADPOOL_SIZE = '128';
 require('dotenv').config();
 const puppeteer = require('puppeteer');
 const url = require("node:url");
@@ -15,10 +16,9 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 const MAX_CONCURRENCY = 12;
 
 const TORNEIOS_LIGA = [
-    { nome: "Zona 3A,3B,3C, 3D", tipo: "Veteranos", url: "" },
+    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "" },
     { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "" },
-    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "" },
-
+    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "" }
 ];
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
@@ -51,65 +51,47 @@ function gerarFilaDeTarefas() {
     let idCounter = 1;
     const FASE_NOME = "Fase Regional";
 
-    const zonasNormais = ["Zona 1A", "Zona 1B", "Zona 1C", "Zona 3A", "Zona 3B", "Zona 3C", "Zona 4A", "Zona 4B", "Zona 4C", "Zona 4D", "Zona 6B", "Zona 7A", "Zona 8A", "Zona 8B"];
-    for (const z of zonasNormais) {
-        tasks.push({ id: idCounter++, nomeJob: "JOB1_ABS_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: null, grupo: null });
-    }
-
-    const zonasMedias = ["Zona 3D", "Zona 6A", "Zona 7B"];
-    const catMedias = ["Masculinos", "Femininos"];
-    for (const z of zonasMedias) {
-        for (const c of catMedias) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB2_ABS_MEDIAS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: c, grupo: null });
-        }
-    }
-
-    const zonasPesadas = ["Zona 2", "Zona 5"];
-    const catLigeiras = ["Femininos", "Masculinos 1", "Masculinos 2", "Masculinos 3"];
-    for (const z of zonasPesadas) {
-        for (const c of catLigeiras) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB3_ABS_LIGEIRAS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: c, grupo: null });
-        }
-    }
-
-    const catPesadas = ["Masculinos 4", "Masculinos 5", "Masculinos 6"];
-    const grupos = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E", "Grupo F", "Grupo G", "Grupo H", "Grupo I"];
-    for (const z of zonasPesadas) {
-        for (const c of catPesadas) {
-            for (const g of grupos) {
-                tasks.push({ id: idCounter++, nomeJob: "JOB4_ABS_GRUPOS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: c, grupo: g });
-            }
-        }
-    }
-
-    const zonasVeteranosNormais = [...zonasNormais, ...zonasMedias];
-    for (const z of zonasVeteranosNormais) {
+    const zonasVet = ["Zona 3A,3B,3C,3D", "Zona 4A,4B,4C,4D", "Zona 7A,7B"];
+    for (const z of zonasVet) {
         tasks.push({ id: idCounter++, nomeJob: "JOB5_VET_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Veteranos", categoria: null, grupo: null });
-    }
-
-    const catVeteranosBase = ["Masculinos", "Femininos"];
-    for (const z of zonasPesadas) {
-        for (const c of catVeteranosBase) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB6_VET_PESADAS", fase: FASE_NOME, zona: z, tipo: "Veteranos", categoria: c, grupo: null });
-        }
     }
 
     return tasks;
 }
 
 // -----------------------------------------------------------------------------
-// 2. FUNÇÃO DO SUPABASE
+// 2. FUNÇÃO DO SUPABASE E REDE
 // -----------------------------------------------------------------------------
+async function fetchWithRetry(url, options = {}, retries = 8) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url, options);
+            if (res) return res;
+        } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise(r => setTimeout(r, 1000 * Math.pow(1.5, i)));
+        }
+    }
+}
+
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
+    if (!meta.home_team || !meta.away_team || 
+        meta.home_team.trim() === "" || meta.away_team.trim() === "" ||
+        meta.home_team === "Equipa Casa" || meta.away_team === "Equipa Fora" ||
+        meta.home_team === "Unknown" || meta.away_team === "Unknown") {
+        console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (dados de equipa incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
+        return;
+    }
+
     let matchStatus = 'scheduled';
     if (meta.home_score !== null && meta.away_score !== null) matchStatus = 'completed';
 
     try {
         let matchId;
 
-        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&grupo=eq.${encodeURIComponent(meta.grupo)}&select=id`;
+        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&fase=eq.${encodeURIComponent(meta.fase || "Fase Regional")}&select=id`;
 
-        const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+        const resMatch = await fetchWithRetry(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();
 
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
@@ -281,14 +263,16 @@ async function executarTarefaPuppeteer(task) {
 
                     const grupos = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a'));
-                        return links.map(l => l.innerText.trim()).filter(text => 
-                            text.includes("Grupo") || text === "Main" || 
-                            text.includes("Série") || text.includes("Serie") || 
-                            text.includes("Poule")
+                        return links.map(l => l.innerText.trim()).filter(text =>
+                            text.includes("Grupo") || text === "Main" ||
+                            text.includes("Série") || text.includes("Serie") ||
+                            text.includes("Poule") || text.includes("-QP") ||
+                            text.includes("-QLL") || text.includes("Eliminatória") ||
+                            text.includes("Final")
                         );
                     });
 
-                    const listaDeGrupos = grupos.length > 0 ? grupos : ["Fase Regular"];
+                    const listaDeGrupos = grupos.length > 0 ? grupos : ["Main"];
 
                     for (const grupo of listaDeGrupos) {
                         try {
@@ -297,7 +281,7 @@ async function executarTarefaPuppeteer(task) {
                             }
 
                             console.log(`${prefix}    🔎 A procurar jogos em: ${grupo}...`);
-                            if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
+                            if (grupo !== "Fase Única" && grupo !== "Fase Regular" && grupo !== "Main") {
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                     safeEvaluate(page, (nomeGrupo) => {
@@ -309,9 +293,19 @@ async function executarTarefaPuppeteer(task) {
                                 await new Promise(r => setTimeout(r, 3000));
                             }
 
-                            const metadadosJogos = await safeEvaluate(page, () => {
+                            const metadadosJogos = await safeEvaluate(page, (nomeGrupoPadrao) => {
                                 const arr = [];
+                                let subGrupoAtual = nomeGrupoPadrao;
+
                                 document.querySelectorAll('table tr').forEach((tr, trIndex) => {
+                                    if (tr.classList.contains('rgGroupHeader')) {
+                                        const headerText = tr.innerText.trim();
+                                        if (headerText) {
+                                            subGrupoAtual = headerText;
+                                        }
+                                        return;
+                                    }
+
                                     const tds = Array.from(tr.querySelectorAll('td'));
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
                                     let matchScoreHome = null, matchScoreAway = null;
@@ -351,20 +345,20 @@ async function executarTarefaPuppeteer(task) {
                                         const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
                                         let temBotao = !!btnRubbers;
                                         let btnIdxToClick = temBotao ? trIndex : -1;
-                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick });
+                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick, subGrupo: subGrupoAtual });
                                     }
                                 });
                                 return arr;
-                            });
+                            }, grupo);
 
                             for (let i = 0; i < metadadosJogos.length; i++) {
                                 const meta = metadadosJogos[i];
 
                                 try {
                                     const metaParaBD = {
-                                        fase: task.fase || "Fase Regional", zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: grupo,
+                                        zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: meta.subGrupo || grupo,
                                         home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo,
-                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway
+                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway, fase: task.fase || "Fase Regional"
                                     };
 
                                     const agora = new Date();
@@ -487,7 +481,7 @@ async function executarTarefaPuppeteer(task) {
                                             })
                                         ]);
                                         await new Promise(r => setTimeout(r, 4500));
-                                        
+
                                         if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
                                             await Promise.all([
                                                 page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
@@ -510,7 +504,7 @@ async function executarTarefaPuppeteer(task) {
             }
         }
     } catch (err) {} finally {
-        await browser.close();
+        try { await browser.close(); } catch (e) {}
         console.log(`${prefix} ✅ TAREFA CONCLUÍDA!`);
     }
 }
@@ -559,5 +553,6 @@ async function executarTarefaPuppeteer(task) {
     await atualizarHeartbeat();
 
     console.log("\n🏆 TODO O SCRAPE FOI CONCLUÍDO COM SUCESSO!");
+    await new Promise(r => setTimeout(r, 1000));
     process.exit(0);
 })();

@@ -1,3 +1,4 @@
+process.env.UV_THREADPOOL_SIZE = '128';
 require('dotenv').config();
 const puppeteer = require('puppeteer');
 const url = require("node:url");
@@ -12,17 +13,17 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 }
 
 // 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO
-const MAX_CONCURRENCY = 12;
+const MAX_CONCURRENCY = 6;
 
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A,1B,1C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud1ABC/Draws" },
     { nome: "Zona 2", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud2/Draws" },
-    { nome: "Zona Zona 3A,3B,3C,3D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
-    { nome: "Zona Zona 4A,4B,4C,4D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud4ABCD/Draws" },
-    { nome: "Zona Zona 5", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud5/Draws" },
+    { nome: "Zona 3A,3B,3C,3D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
+    { nome: "Zona 4A,4B,4C,4D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud4ABCD/Draws" },
+    { nome: "Zona 5", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud5/Draws" },
     { nome: "Zona 6A,6B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud6AB/Draws" },
     { nome: "Zona 7A,7B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" },
-    { nome: "Zona Zona 8A,8B", tipo: "https://fpp.tiepadel.com/Tournaments/RegMud8AB/Draws" }
+    { nome: "Zona 8A,8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud8AB/Draws" }
 ];
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
@@ -55,17 +56,9 @@ function gerarFilaDeTarefas() {
     let idCounter = 1;
     const FASE_NOME = "Fase Regional";
 
-    const zonasNormais = ["Zona 1A", "Zona 1B", "Zona 1C", "Zona 3A", "Zona 3B", "Zona 3C", "Zona 4A", "Zona 4B", "Zona 4C", "Zona 4D", "Zona 6B", "Zona 7A", "Zona 8A", "Zona 8B"];
+    const zonasNormais = ["Zona 1A,1B,1C", "Zona 3A,3B,3C,3D", "Zona 4A,4B,4C,4D", "Zona 6A,6B", "Zona 7A,7B", "Zona 8A,8B"];
     for (const z of zonasNormais) {
         tasks.push({ id: idCounter++, nomeJob: "JOB1_ABS_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: null, grupo: null });
-    }
-
-    const zonasMedias = ["Zona 3D", "Zona 6A", "Zona 7B"];
-    const catMedias = ["Masculinos", "Femininos"];
-    for (const z of zonasMedias) {
-        for (const c of catMedias) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB2_ABS_MEDIAS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: c, grupo: null });
-        }
     }
 
     const zonasPesadas = ["Zona 2", "Zona 5"];
@@ -86,8 +79,7 @@ function gerarFilaDeTarefas() {
         }
     }
 
-    const zonasVeteranosNormais = [...zonasNormais, ...zonasMedias];
-    for (const z of zonasVeteranosNormais) {
+    for (const z of zonasNormais) {
         tasks.push({ id: idCounter++, nomeJob: "JOB5_VET_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Veteranos", categoria: null, grupo: null });
     }
 
@@ -102,18 +94,38 @@ function gerarFilaDeTarefas() {
 }
 
 // -----------------------------------------------------------------------------
-// 2. FUNÇÃO DO SUPABASE
+// 2. FUNÇÃO DO SUPABASE E REDE
 // -----------------------------------------------------------------------------
+async function fetchWithRetry(url, options = {}, retries = 8) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url, options);
+            if (res) return res;
+        } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise(r => setTimeout(r, 1000 * Math.pow(1.5, i)));
+        }
+    }
+}
+
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
+    if (!meta.home_team || !meta.away_team || 
+        meta.home_team.trim() === "" || meta.away_team.trim() === "" ||
+        meta.home_team === "Equipa Casa" || meta.away_team === "Equipa Fora" ||
+        meta.home_team === "Unknown" || meta.away_team === "Unknown") {
+        console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (dados de equipa incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
+        return;
+    }
+
     let matchStatus = 'scheduled';
     if (meta.home_score !== null && meta.away_score !== null) matchStatus = 'completed';
 
     try {
         let matchId;
 
-        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&grupo=eq.${encodeURIComponent(meta.grupo)}&select=id`;
+        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&fase=eq.${encodeURIComponent(meta.fase || "Fase Regional")}&select=id`;
 
-        const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+        const resMatch = await fetchWithRetry(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();
 
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
@@ -128,7 +140,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         let dbSuccess = false;
 
         if (!matchesDb || matchesDb.length === 0) {
-            const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
+            const resCreateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
             if (resCreateMatch.ok) {
                 dbSuccess = true;
                 const newMatch = await resCreateMatch.json();
@@ -138,7 +150,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             }
         } else {
             matchId = matchesDb[0].id;
-            const resUpdateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
+            const resUpdateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
             if (resUpdateMatch.ok) {
                 dbSuccess = true;
             } else {
@@ -158,18 +170,18 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             const payloadDetail = { match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result };
 
             const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id`;
-            const resDetailCheck = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+            const resDetailCheck = await fetchWithRetry(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
             const existingDetails = await resDetailCheck.json();
 
             if (existingDetails && existingDetails.length > 0) {
                 const detailId = existingDetails[0].id;
-                await fetch(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
+                await fetchWithRetry(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
                     method: 'PATCH',
                     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ home_duo: r.home_duo, away_duo: r.away_duo, result: r.result })
                 });
             } else {
-                await fetch(`${SUPABASE_URL}/rest/v1/match_details`, {
+                await fetchWithRetry(`${SUPABASE_URL}/rest/v1/match_details`, {
                     method: 'POST',
                     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(payloadDetail)
@@ -188,7 +200,7 @@ async function atualizarHeartbeat() {
     try {
         const agora = new Date().toISOString();
         const url = `${SUPABASE_URL}/rest/v1/scraper_status?id=eq.1`;
-        const res = await fetch(url, {
+        const res = await fetchWithRetry(url, {
             method: 'PATCH',
             headers: {
                 'apikey': SUPABASE_KEY,
@@ -288,11 +300,13 @@ async function executarTarefaPuppeteer(task) {
                         return links.map(l => l.innerText.trim()).filter(text => 
                             text.includes("Grupo") || text === "Main" || 
                             text.includes("Série") || text.includes("Serie") || 
-                            text.includes("Poule")
+                            text.includes("Poule") || text.includes("-QP") ||
+                            text.includes("-QLL") || text.includes("Eliminatória") ||
+                            text.includes("Final")
                         );
                     });
 
-                    const listaDeGrupos = grupos.length > 0 ? grupos : ["Fase Regular"];
+                    const listaDeGrupos = grupos.length > 0 ? grupos : ["Main"];
 
                     for (const grupo of listaDeGrupos) {
                         try {
@@ -301,7 +315,7 @@ async function executarTarefaPuppeteer(task) {
                             }
 
                             console.log(`${prefix}    🔎 A procurar jogos em: ${grupo}...`);
-                            if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
+                            if (grupo !== "Fase Única" && grupo !== "Fase Regular" && grupo !== "Main") {
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
                                     safeEvaluate(page, (nomeGrupo) => {
@@ -313,9 +327,19 @@ async function executarTarefaPuppeteer(task) {
                                 await new Promise(r => setTimeout(r, 3000));
                             }
 
-                            const metadadosJogos = await safeEvaluate(page, () => {
+                            const metadadosJogos = await safeEvaluate(page, (nomeGrupoPadrao) => {
                                 const arr = [];
+                                let subGrupoAtual = nomeGrupoPadrao;
+
                                 document.querySelectorAll('table tr').forEach((tr, trIndex) => {
+                                    if (tr.classList.contains('rgGroupHeader')) {
+                                        const headerText = tr.innerText.trim();
+                                        if (headerText) {
+                                            subGrupoAtual = headerText;
+                                        }
+                                        return;
+                                    }
+
                                     const tds = Array.from(tr.querySelectorAll('td'));
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
                                     let matchScoreHome = null, matchScoreAway = null;
@@ -355,20 +379,20 @@ async function executarTarefaPuppeteer(task) {
                                         const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
                                         let temBotao = !!btnRubbers;
                                         let btnIdxToClick = temBotao ? trIndex : -1;
-                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick });
+                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick, subGrupo: subGrupoAtual });
                                     }
                                 });
                                 return arr;
-                            });
+                            }, grupo);
 
                             for (let i = 0; i < metadadosJogos.length; i++) {
                                 const meta = metadadosJogos[i];
 
                                 try {
                                     const metaParaBD = {
-                                        fase: task.fase || "Fase Regional", zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: grupo,
+                                        zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: meta.subGrupo || grupo,
                                         home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo,
-                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway
+                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway, fase: task.fase || "Fase Regional"
                                     };
 
                                     const agora = new Date();
@@ -514,7 +538,7 @@ async function executarTarefaPuppeteer(task) {
             }
         }
     } catch (err) {} finally {
-        await browser.close();
+        try { await browser.close(); } catch (e) {}
         console.log(`${prefix} ✅ TAREFA CONCLUÍDA!`);
     }
 }
@@ -563,5 +587,6 @@ async function executarTarefaPuppeteer(task) {
     await atualizarHeartbeat();
 
     console.log("\n🏆 TODO O SCRAPE FOI CONCLUÍDO COM SUCESSO!");
+    await new Promise(r => setTimeout(r, 1000));
     process.exit(0);
 })();

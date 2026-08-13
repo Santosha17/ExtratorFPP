@@ -1,3 +1,4 @@
+process.env.UV_THREADPOOL_SIZE = '128';
 require('dotenv').config();
 const puppeteer = require('puppeteer');
 
@@ -139,15 +140,15 @@ const ESTATISTICAS = {
     detalhesGuardados: 0
 };
 
-// 🛡️ REQ COM RETRY: Prevenir falhas temporárias de DNS (EAI_AGAIN) e rede sob alta carga (até 5 tentativas)
-async function fetchWithRetry(url, options = {}, retries = 5) {
+// 🛡️ REQ COM RETRY: Prevenir falhas temporárias de DNS (EAI_AGAIN) e rede sob alta carga (até 8 tentativas)
+async function fetchWithRetry(url, options = {}, retries = 8) {
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
-            return res;
+            if (res) return res;
         } catch (err) {
             if (i === retries - 1) throw err;
-            await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+            await new Promise(r => setTimeout(r, 1000 * Math.pow(1.5, i)));
         }
     }
 }
