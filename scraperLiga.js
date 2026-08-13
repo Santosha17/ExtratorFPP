@@ -133,7 +133,38 @@ function gerarFilaDeTarefas() {
 // -----------------------------------------------------------------------------
 // 2. FUNÇÃO DO SUPABASE
 // -----------------------------------------------------------------------------
+// 2. FUNÇÃO DO SUPABASE E REDE
+// -----------------------------------------------------------------------------
+const ESTATISTICAS = {
+    jogosGuardados: 0,
+    jogosAtualizados: 0,
+    jogosIgnoradosInvalidos: 0,
+    detalhesGuardados: 0
+};
+
+// 🛡️ REQ COM RETRY: Prevenir falhas temporárias de DNS (EAI_AGAIN) e rede sob alta carga
+async function fetchWithRetry(url, options = {}, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url, options);
+            return res;
+        } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        }
+    }
+}
+
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
+    // 🛡️ VALIDAÇÃO DE SEGURANÇA: Impedir gravação de jogos com equipas em branco ou inválidas
+    if (!meta.home_team || !meta.away_team || 
+        meta.home_team.trim() === "" || meta.away_team.trim() === "" ||
+        meta.home_team === "Equipa Casa" || meta.away_team === "Equipa Fora") {
+        console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (dados de equipa incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
+        ESTATISTICAS.jogosIgnoradosInvalidos++;
+        return;
+    }
+
     let matchStatus = 'scheduled';
 
     if (meta.home_score !== null && meta.away_score !== null) {
@@ -142,10 +173,8 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         const dataJogo = new Date(meta.data_jogo.replace(' ', 'T'));
         const agora = new Date();
 
-        // Adiciona 24 horas (em milissegundos) à data do jogo para ter a janela de tolerância de submissão
         const prazoLimite = new Date(dataJogo.getTime() + (24 * 60 * 60 * 1000));
 
-        // Se a data/hora atual já ultrapassou o prazo de 24h e não há resultados:
         if (agora > prazoLimite) {
             matchStatus = 'no_result';
         }
@@ -156,7 +185,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
 
         let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&grupo=eq.${encodeURIComponent(meta.grupo)}&select=id`;
 
-        const resMatch = await fetch(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+        const resMatch = await fetchWithRetry(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();
 
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
@@ -171,9 +200,10 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         let dbSuccess = false;
 
         if (!matchesDb || matchesDb.length === 0) {
-            const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
+            const resCreateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
             if (resCreateMatch.ok) {
                 dbSuccess = true;
+                ESTATISTICAS.jogosGuardados++;
                 const newMatch = await resCreateMatch.json();
                 if (newMatch && newMatch.length > 0) matchId = newMatch[0].id;
             } else {
@@ -181,9 +211,10 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             }
         } else {
             matchId = matchesDb[0].id;
-            const resUpdateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
+            const resUpdateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
             if (resUpdateMatch.ok) {
                 dbSuccess = true;
+                ESTATISTICAS.jogosAtualizados++;
             } else {
                 console.error(`${prefix} 🚨 ERRO a ATUALIZAR jogo na BD:`, await resUpdateMatch.text());
             }
@@ -201,22 +232,24 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             const payloadDetail = { match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result };
 
             const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id`;
-            const resDetailCheck = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+            const resDetailCheck = await fetchWithRetry(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
             const existingDetails = await resDetailCheck.json();
 
             if (existingDetails && existingDetails.length > 0) {
                 const detailId = existingDetails[0].id;
-                await fetch(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
+                await fetchWithRetry(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
                     method: 'PATCH',
                     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ home_duo: r.home_duo, away_duo: r.away_duo, result: r.result })
                 });
+                ESTATISTICAS.detalhesGuardados++;
             } else {
-                await fetch(`${SUPABASE_URL}/rest/v1/match_details`, {
+                await fetchWithRetry(`${SUPABASE_URL}/rest/v1/match_details`, {
                     method: 'POST',
                     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(payloadDetail)
                 });
+                ESTATISTICAS.detalhesGuardados++;
             }
         }
     } catch (error) {
@@ -231,7 +264,7 @@ async function atualizarHeartbeat() {
     try {
         const agora = new Date().toISOString();
         const url = `${SUPABASE_URL}/rest/v1/scraper_status?id=eq.1`;
-        const res = await fetch(url, {
+        const res = await fetchWithRetry(url, {
             method: 'PATCH',
             headers: {
                 'apikey': SUPABASE_KEY,
@@ -258,7 +291,6 @@ async function executarTarefaPuppeteer(task) {
     const prefix = `[SUB-MÁQUINA ${task.id} | ${task.nomeJob}]`;
     console.log(`${prefix} A arrancar: Zona=${task.zona} | Cat=${task.categoria || 'Todas'} | Grupo=${task.grupo || 'Todos'}`);
 
-    // 🔥 O AUTO-RETRY: Função que espera pacientemente se o site for lento! 🔥
     const safeEvaluate = async (pageToEval, evaluateFn, ...args) => {
         let lastError;
         for (let i = 0; i < 4; i++) {
@@ -269,11 +301,11 @@ async function executarTarefaPuppeteer(task) {
                 if (e.message.includes("Execution context was destroyed") || e.message.includes("Target closed")) {
                     await new Promise(r => setTimeout(r, 3500));
                 } else {
-                    throw e; // Se for outro erro qualquer, atira logo
+                    throw e;
                 }
             }
         }
-        throw lastError; // Se falhou 4 vezes seguidas, desiste e atira erro
+        throw lastError;
     };
 
     const torneiosAlvo = TORNEIOS_LIGA.filter(t => t.nome === task.zona && t.tipo === task.tipo);
@@ -311,12 +343,11 @@ async function executarTarefaPuppeteer(task) {
 
                 console.log(`\n${prefix} 🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
                 try {
-                    // 🔥 MUDANÇA 1: Esperar pela NAVEGAÇÃO ao selecionar categoria
                     await Promise.all([
                         page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
                         page.select('#drop_tournaments', cat.valor).catch(() => {})
                     ]);
-                    await new Promise(r => setTimeout(r, 2500)); // Pausa extra por segurança
+                    await new Promise(r => setTimeout(r, 2500));
 
                     const temEncontros = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a, span, div'));
@@ -325,7 +356,6 @@ async function executarTarefaPuppeteer(task) {
 
                     if (!temEncontros) continue;
 
-                    // 🔥 MUDANÇA 2: Esperar pela NAVEGAÇÃO ao clicar em Encontros
                     await Promise.all([
                         page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
                         safeEvaluate(page, () => {
@@ -362,10 +392,19 @@ async function executarTarefaPuppeteer(task) {
                                 await new Promise(r => setTimeout(r, 2500));
                             }
 
+                            // ⌛ Esperar ativamente pela tabela de jogos carregar (evita registos perdidos por lag do servidor)
+                            for (let k = 0; k < 4; k++) {
+                                const temTabelaPronta = await safeEvaluate(page, () => {
+                                    const trs = Array.from(document.querySelectorAll('table tr'));
+                                    return trs.some(tr => tr.innerText.includes('-'));
+                                }).catch(() => false);
+                                if (temTabelaPronta) break;
+                                await new Promise(r => setTimeout(r, 1200));
+                            }
+
                             const metadadosJogos = await safeEvaluate(page, () => {
                                 const arr = [];
-                                let indexDoBotao = 0;
-                                document.querySelectorAll('table tr').forEach((tr) => {
+                                document.querySelectorAll('table tr').forEach((tr, trIndex) => {
                                     const tds = Array.from(tr.querySelectorAll('td'));
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
                                     let matchScoreHome = null, matchScoreAway = null;
@@ -423,7 +462,7 @@ async function executarTarefaPuppeteer(task) {
                                     if(home !== "Equipa Casa" && home !== "") {
                                         const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
                                         let temBotao = !!btnRubbers;
-                                        let btnIdxToClick = temBotao ? indexDoBotao++ : -1;
+                                        let btnIdxToClick = temBotao ? trIndex : -1;
                                         arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick });
                                     }
                                 });
@@ -460,8 +499,8 @@ async function executarTarefaPuppeteer(task) {
                                     await Promise.all([
                                         page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
                                         safeEvaluate(page, (idx) => {
-                                            const btns = document.querySelectorAll('a[id*="link_open_rubbers"]');
-                                            if (btns[idx]) btns[idx].click();
+                                            const btns = document.querySelectorAll('table tr')[idx]?.querySelectorAll('a[id*="link_open_rubbers"]');
+                                            if (btns && btns.length > 0) btns[0].click();
                                         }, meta.btnIdxToClick)
                                     ]);
 
@@ -489,8 +528,7 @@ async function executarTarefaPuppeteer(task) {
                                         };
                                         const isScore = (t) => {
                                             const s = t.toLowerCase().trim();
-                                            if (/^(w\.o\.|w\.o|fc|desistência|desistencia)$/.test(s)) return true;
-                                            // 🔥 ATUALIZADO: Agora permite parênteses curvos (), retos [] e vírgulas!
+                                            if (/^(w\.o\.|w\.o|fc|desistência|desistencia|ret\.|ret)$/.test(s)) return true;
                                             return /^[\d\s\-\/\(\)\[\],]+$/.test(s) && /\d/.test(s);
                                         };
 
@@ -552,7 +590,6 @@ async function executarTarefaPuppeteer(task) {
                                 } catch (matchError) {
                                     console.log(`${prefix}       ❌ Falha crítica (Abortar Jogo): ${matchError.message}`);
                                 } finally {
-                                    // 🔥 MUDANÇA 3: Esperar pela NAVEGAÇÃO ao VOLTAR
                                     try {
                                         await Promise.all([
                                             page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
@@ -562,6 +599,18 @@ async function executarTarefaPuppeteer(task) {
                                             })
                                         ]);
                                         await new Promise(r => setTimeout(r, 2500));
+
+                                        if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
+                                            await Promise.all([
+                                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                                                safeEvaluate(page, (nomeGrupo) => {
+                                                    const links = Array.from(document.querySelectorAll('a'));
+                                                    const target = links.find(l => l.innerText.trim() === nomeGrupo);
+                                                    if (target) target.click();
+                                                }, grupo)
+                                            ]);
+                                            await new Promise(r => setTimeout(r, 2500));
+                                        }
                                     } catch(e) {}
                                 }
                             }
@@ -586,11 +635,9 @@ async function executarTarefaPuppeteer(task) {
 
     let filaDeTarefas = gerarFilaDeTarefas();
 
-    // 🔥 APLICAR OS FILTROS DO TERMINAL ÀS TAREFAS 🔥
     if (FILTER_ZONA) filaDeTarefas = filaDeTarefas.filter(t => t.zona === FILTER_ZONA);
     if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo === FILTER_TIPO);
 
-    // Forçar a categoria e grupo na tarefa se o utilizador pedir pelo terminal
     if (FILTER_CATEGORIA || FILTER_GRUPO) {
         filaDeTarefas = filaDeTarefas.map(t => {
             if (FILTER_CATEGORIA) t.categoria = FILTER_CATEGORIA;
@@ -598,7 +645,6 @@ async function executarTarefaPuppeteer(task) {
             return t;
         });
 
-        // Limpar tarefas repetidas apenas se os filtros foram aplicados
         filaDeTarefas = [...new Map(filaDeTarefas.map(t => [t.zona + t.tipo + t.categoria + t.grupo, t])).values()];
     }
 
@@ -623,6 +669,16 @@ async function executarTarefaPuppeteer(task) {
 
     await atualizarHeartbeat();
 
-    console.log("\n🏆 TODO O SCRAPER FOI CONCLUÍDO COM SUCESSO!");
-    process.exit(0);
+    console.log("\n==================================================");
+    console.log("📊 RELATÓRIO DE AUDITORIA E INTEGRIDADE DE DADOS");
+    console.log("==================================================");
+    console.log(`✅ Jogos Novos Inseridos:      ${ESTATISTICAS.jogosGuardados}`);
+    console.log(`🔄 Jogos Atualizados:          ${ESTATISTICAS.jogosAtualizados}`);
+    console.log(`🎾 Detalhes (Rubbers) Salvos:  ${ESTATISTICAS.detalhesGuardados}`);
+    console.log(`🛡️ Jogos Inválidos Rejeitados: ${ESTATISTICAS.jogosIgnoradosInvalidos}`);
+    console.log("==================================================");
+    console.log("🏆 TODO O SCRAPER FOI CONCLUÍDO COM SUCESSO!");
+    setTimeout(() => {
+        process.exit(0);
+    }, 1000);
 })();
