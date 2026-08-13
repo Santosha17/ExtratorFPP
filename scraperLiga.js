@@ -619,7 +619,7 @@ async function executarTarefaPuppeteer(task) {
             }
         }
     } catch (err) {} finally {
-        await browser.close();
+        try { await browser.close(); } catch (e) {}
         console.log(`${prefix} ✅ TAREFA CONCLUÍDA!`);
     }
 }
