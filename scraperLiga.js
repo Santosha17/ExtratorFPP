@@ -10,9 +10,8 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
     process.exit(1);
 }
 
-// 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO
-// Baixei para 8 por segurança (para não deitar abaixo o servidor da TiePadel). Podes testar 12.
-const MAX_CONCURRENCY = 8;
+// 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO (6 evita saturação de DNS/CPU no servidor)
+const MAX_CONCURRENCY = 6;
 
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/b996ef02-a837-48b5-a7d3-3f86077fb585/Draws" },
@@ -129,11 +128,6 @@ function gerarFilaDeTarefas() {
 
     return tasks;
 }
-
-// -----------------------------------------------------------------------------
-// 2. FUNÇÃO DO SUPABASE
-// 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO (6 evita saturação de DNS/CPU no servidor)
-const MAX_CONCURRENCY = 6;
 
 // -----------------------------------------------------------------------------
 // 2. FUNÇÃO DO SUPABASE E REDE
