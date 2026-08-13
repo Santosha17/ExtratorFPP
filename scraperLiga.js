@@ -132,6 +132,9 @@ function gerarFilaDeTarefas() {
 
 // -----------------------------------------------------------------------------
 // 2. FUNÇÃO DO SUPABASE
+// 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO (6 evita saturação de DNS/CPU no servidor)
+const MAX_CONCURRENCY = 6;
+
 // -----------------------------------------------------------------------------
 // 2. FUNÇÃO DO SUPABASE E REDE
 // -----------------------------------------------------------------------------
@@ -142,15 +145,15 @@ const ESTATISTICAS = {
     detalhesGuardados: 0
 };
 
-// 🛡️ REQ COM RETRY: Prevenir falhas temporárias de DNS (EAI_AGAIN) e rede sob alta carga
-async function fetchWithRetry(url, options = {}, retries = 3) {
+// 🛡️ REQ COM RETRY: Prevenir falhas temporárias de DNS (EAI_AGAIN) e rede sob alta carga (até 5 tentativas)
+async function fetchWithRetry(url, options = {}, retries = 5) {
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
             return res;
         } catch (err) {
             if (i === retries - 1) throw err;
-            await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+            await new Promise(r => setTimeout(r, 1500 * (i + 1)));
         }
     }
 }
