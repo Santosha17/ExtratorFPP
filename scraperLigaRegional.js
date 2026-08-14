@@ -79,17 +79,6 @@ function gerarFilaDeTarefas() {
         }
     }
 
-    for (const z of zonasNormais) {
-        tasks.push({ id: idCounter++, nomeJob: "JOB5_VET_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Veteranos", categoria: null, grupo: null });
-    }
-
-    const catVeteranosBase = ["Masculinos", "Femininos"];
-    for (const z of zonasPesadas) {
-        for (const c of catVeteranosBase) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB6_VET_PESADAS", fase: FASE_NOME, zona: z, tipo: "Veteranos", categoria: c, grupo: null });
-        }
-    }
-
     return tasks;
 }
 
