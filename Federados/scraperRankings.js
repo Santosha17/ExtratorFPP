@@ -1,7 +1,6 @@
 require('dotenv').config({ path: '../.env' });
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const cheerio = require('cheerio');
 const { createClient } = require('@supabase/supabase-js');
 
 puppeteer.use(StealthPlugin());
@@ -22,7 +21,6 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
     }); 
     
     const urlFpp = 'https://tour.tiesports.com/fpp/weekly_rankings';
-    
     
     const categoriasParaExtrair = [
         { nome: 'Absolutos - Masculinos', target: 'repeater_rankings_top_10$ctl00$link_load_more_men' },
@@ -62,7 +60,6 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                     const targetH4 = h4s.find(h4 => h4.innerText.trim().includes(nomeCat));
                     if (!targetH4) return [];
                     
-                    // Encontrar a tabela relacionada (normalmente no mesmo painel)
                     let panel = targetH4.closest('.panel');
                     if (!panel) return [];
                     
@@ -80,7 +77,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                         let urlPerfil = nameNode.getAttribute('href') || '';
                         let licenca = null;
                         if (urlPerfil.includes('id=')) {
-                            licenca = parseInt(urlPerfil.split('id=')[1], 10);
+                            const parsedLic = parseInt(urlPerfil.split('id=')[1], 10);
+                            licenca = isNaN(parsedLic) ? null : parsedLic;
                         }
                         
                         return {
@@ -103,48 +101,56 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                 dadosExtraidos.push(...pageData);
             } else {
                 console.log(`Buscando ranking completo...`);
-                // Clica no Ver Mais contornando o strict mode
-                await page.addScriptTag({
-                    content: `
-                        setTimeout(function() {
-                            var btn = document.querySelector('${btnSelector}');
-                            if (btn) btn.click();
-                        }, 10);
-                    `
-                });
+                
+                // Clica no "Ver mais" e aguarda o endRequest do WebForms
+                await page.evaluate((sel) => {
+                    return new Promise((resolve) => {
+                        const prm = Sys.WebForms.PageRequestManager.getInstance();
+                        const handler = (sender, args) => {
+                            prm.remove_endRequest(handler);
+                            resolve();
+                        };
+                        prm.add_endRequest(handler);
+                        const btn = document.querySelector(sel);
+                        if (btn) btn.click();
+                        else resolve();
+                    });
+                }, btnSelector);
 
-                // Espera a tabela detalhada aparecer
-                await page.waitForFunction(() => {
-                    return document.querySelector('table.team-roster-table') !== null;
-                }, { timeout: 30000 });
-
-                // Espera o AJAX terminar
-                await page.waitForFunction(() => {
-                    return Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack() === false;
-                });
+                await page.waitForFunction(() => document.querySelector('table.team-roster-table') !== null, { timeout: 30000 });
 
                 let hasNextPage = true;
-                let currentPage = 1;
 
                 while (hasNextPage) {
-                    console.log(`   📄 Lendo página ${currentPage}...`);
+                    const activePageNum = await page.evaluate(() => {
+                        const activeEl = document.querySelector('span[id*="DataPager_ranking_players"] .active');
+                        return activeEl ? parseInt(activeEl.innerText.trim(), 10) : 1;
+                    });
+
+                    console.log(`   📄 Lendo página ${activePageNum}...`);
                     
                     const pageData = await page.evaluate(() => {
                         const table = document.querySelectorAll('table.team-roster-table')[0];
+                        if (!table) return [];
                         const rows = Array.from(table.querySelectorAll('tbody tr'));
-                        return rows.map(tr => {
+                        return rows.map((tr, index) => {
                             const tds = tr.querySelectorAll('td');
                             if (tds.length >= 5) {
+                                const rawLic = tds[2].innerText.trim();
+                                const lic = rawLic ? parseInt(rawLic, 10) : null;
+                                const hasPointsBtn = !!tr.querySelector('input[value="Ver Pontos"]');
                                 return {
+                                    rowIndex: index,
                                     posicao: tds[0].innerText.trim(),
                                     variacao: tds[1] ? tds[1].innerText.trim() : null,
-                                    licenca: parseInt(tds[2].innerText.trim(), 10),
+                                    licenca: isNaN(lic) ? null : lic,
                                     nome: tds[3].innerText.trim(),
                                     pontos: tds[4].innerText.trim(),
                                     clube: tds.length > 5 ? tds[5].innerText.trim() : null,
                                     nivel: tds.length > 6 ? tds[6].innerText.trim() : null,
                                     escalao: tds.length > 7 ? tds[7].innerText.trim() : null,
                                     qtd_torneios: tds.length > 8 ? parseInt(tds[8].innerText.trim(), 10) : 0,
+                                    hasPointsBtn: hasPointsBtn,
                                     localidade: null,
                                     mao: null,
                                     torneios: []
@@ -157,31 +163,36 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                     // Loop para clicar em "Ver Pontos" de cada jogador nesta página
                     const rowsCount = pageData.length;
                     for (let i = 0; i < rowsCount; i++) {
-                        await page.addScriptTag({
-                            content: `
-                                setTimeout(function() {
-                                    var table = document.querySelector('table.team-roster-table');
-                                    if (table) {
-                                        var rows = table.querySelectorAll('tbody tr');
-                                        if (rows[${i}]) {
-                                            var btn = rows[${i}].querySelector('input[value="Ver Pontos"]');
-                                            if (btn) btn.click();
-                                        }
-                                    }
-                                }, 10);
-                            `
-                        });
-                        
+                        const player = pageData[i];
+                        if (!player.hasPointsBtn) continue;
+
                         try {
-                            await page.waitForFunction(() => {
-                                return Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack() === false;
-                            }, { timeout: 15000 });
-                            await new Promise(r => setTimeout(r, 500)); // Animação do modal
+                            // Clica em "Ver Pontos" e aguarda fim do PostBack WebForms
+                            await page.evaluate((rowIndex) => {
+                                return new Promise((resolve) => {
+                                    const prm = Sys.WebForms.PageRequestManager.getInstance();
+                                    const handler = (sender, args) => {
+                                        prm.remove_endRequest(handler);
+                                        resolve();
+                                    };
+                                    prm.add_endRequest(handler);
+                                    const table = document.querySelector('table.team-roster-table');
+                                    const rows = table ? table.querySelectorAll('tbody tr') : [];
+                                    if (rows[rowIndex]) {
+                                        const btn = rows[rowIndex].querySelector('input[value="Ver Pontos"]');
+                                        if (btn) btn.click();
+                                        else resolve();
+                                    } else {
+                                        resolve();
+                                    }
+                                });
+                            }, player.rowIndex);
+
+                            await new Promise(r => setTimeout(r, 150)); // Animação do modal
                             
                             const playerExtraInfo = await page.evaluate(() => {
                                 const locationNode = document.querySelector('[id*="lbl_ranking_points_player_from"]');
                                 const handNode = document.querySelector('[id*="lbl_ranking_points_player_plays"]');
-                                
                                 const torneios = [];
                                 
                                 // Tab 1: Contabilizados
@@ -229,93 +240,57 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
                                 };
                             });
                             
-                            pageData[i].localidade = playerExtraInfo.localidade;
-                            pageData[i].mao = playerExtraInfo.mao;
-                            pageData[i].torneios = playerExtraInfo.torneios;
+                            player.localidade = playerExtraInfo.localidade;
+                            player.mao = playerExtraInfo.mao;
+                            player.torneios = playerExtraInfo.torneios;
                             
-                            // Tentar fechar o modal/popup de pontos para não acumular
-                            await page.addScriptTag({
-                                content: `
-                                    setTimeout(function() {
-                                        var closeBtn = document.querySelector('[data-dismiss="modal"], .close, .RadWindow .rwCloseButton');
-                                        if (closeBtn) closeBtn.click();
-                                    }, 10);
-                                `
+                            // Fechar o modal de pontos
+                            await page.evaluate(() => {
+                                const closeBtn = document.querySelector('[data-dismiss="modal"], .close, .RadWindow .rwCloseButton');
+                                if (closeBtn) closeBtn.click();
                             });
-                            await new Promise(r => setTimeout(r, 200));
+                            await new Promise(r => setTimeout(r, 100));
                         } catch(e) {
-                            console.log(`      ⚠️ Timeout/Erro ao ler pontos do jogador ${pageData[i].nome}. Continuar...`);
+                            console.log(`      ⚠️ Timeout/Erro ao ler pontos do jogador ${player.nome}. Continuar...`);
                         }
                     }
 
                     dadosExtraidos.push(...pageData);
 
-                    // Pega a licença do primeiro jogador para garantir que a página mudou
-                    const firstLicence = pageData.length > 0 ? pageData[0].licenca : null;
+                    // Paginação para a próxima página
+                    const targetPageNum = activePageNum + 1;
+                    const pageNavResult = await page.evaluate((targetNum) => {
+                        const pager = document.querySelector('span[id*="DataPager_ranking_players"]');
+                        if (!pager) return { canNavigate: false };
 
-                    // Verifica se há próxima página e clica
-                    const hasNextLink = await page.evaluate((pageToFind) => {
-                        const pagerSpans = document.querySelectorAll('span[id*="DataPager_ranking_players"]');
-                        if (pagerSpans.length === 0) return false;
-                        
-                        const pager = pagerSpans[0];
                         const links = Array.from(pager.querySelectorAll('a'));
-                        let nextLink = links.find(a => a.innerText.trim() === String(pageToFind));
-                        
-                        if (!nextLink) {
+                        let linkToClick = links.find(a => a.innerText.trim() === String(targetNum));
+
+                        if (!linkToClick) {
                             const children = Array.from(pager.children);
                             const activeIdx = children.findIndex(el => el.classList.contains('active'));
                             const forwardDot = children.find((el, idx) => idx > activeIdx && el.innerText && el.innerText.trim() === '...');
-                            if (forwardDot) {
-                                nextLink = forwardDot;
+                            if (forwardDot && forwardDot.tagName === 'A') {
+                                linkToClick = forwardDot;
                             }
                         }
-                        return nextLink !== undefined;
-                    }, currentPage + 1);
 
-                    if (hasNextLink) {
-                        await page.addScriptTag({
-                            content: `
-                                setTimeout(function() {
-                                    var pagerSpans = document.querySelectorAll('span[id*="DataPager_ranking_players"]');
-                                    if (pagerSpans.length > 0) {
-                                        var pager = pagerSpans[0];
-                                        var links = Array.from(pager.querySelectorAll('a'));
-                                        var nextLink = links.find(a => a.innerText.trim() === String(${currentPage + 1}));
-                                        if (!nextLink) {
-                                            var children = Array.from(pager.children);
-                                            var activeIdx = children.findIndex(el => el.classList.contains('active'));
-                                            var forwardDot = children.find((el, idx) => idx > activeIdx && el.innerText && el.innerText.trim() === '...');
-                                            if (forwardDot) {
-                                                nextLink = forwardDot;
-                                            }
-                                        }
-                                        if (nextLink) nextLink.click();
-                                    }
-                                }, 10);
-                            `
-                        });
-
-                        try {
-                            // Espera que a tabela atualize (primeira licença muda) ou chegue ao fim do carregamento
-                            await page.waitForFunction((oldLicence) => {
-                                const table = document.querySelectorAll('table.team-roster-table')[0];
-                                if (!table) return false;
-                                const tr = table.querySelector('tbody tr');
-                                if (!tr) return false;
-                                const tds = tr.querySelectorAll('td');
-                                if (tds.length < 5) return false;
-                                const currentLicence = parseInt(tds[2].innerText.trim(), 10);
-                                return currentLicence !== oldLicence && Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack() === false;
-                            }, { timeout: 20000 }, firstLicence);
-                        } catch(e) {
-                            console.log(`      ⚠️ Timeout ao esperar página ${currentPage + 1}.`);
-                            hasNextPage = false;
-                            continue;
+                        if (!linkToClick) {
+                            return { canNavigate: false };
                         }
 
-                        currentPage++;
-                    } else {
+                        return new Promise((resolve) => {
+                            const prm = Sys.WebForms.PageRequestManager.getInstance();
+                            const handler = (sender, args) => {
+                                prm.remove_endRequest(handler);
+                                resolve({ canNavigate: true });
+                            };
+                            prm.add_endRequest(handler);
+                            linkToClick.click();
+                        });
+                    }, targetPageNum);
+
+                    if (!pageNavResult.canNavigate) {
                         hasNextPage = false;
                     }
                 }

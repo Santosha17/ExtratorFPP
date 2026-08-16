@@ -159,7 +159,9 @@ async function bulkInsert(tableName, dataArray) {
                                 }
                             });
 
-                            // 3. Extrair Jogos, Resultados, Datas/Horas e Rondas
+                            // 3. Extrair Jogos e deduzir rondas por coordenadas X
+                            const jogosRaw = [];
+
                             document.querySelectorAll('span[id*="_lbl_score_"]').forEach(scoreEl => {
                                 const idParts = scoreEl.id.split('_lbl_score_');
                                 if (idParts.length === 2) {
@@ -174,62 +176,84 @@ async function bulkInsert(tableName, dataArray) {
 
                                     if (equipaA && equipaB && !equipaA.toLowerCase().includes('bye') && !equipaB.toLowerCase().includes('bye')) {
                                         let dataHoraCampo = '';
-                                        let ronda = 'Eliminatórias';
 
                                         const parentTd = scoreEl.closest('td');
                                         if (parentTd) {
-                                            // Extração da Data/Hora - CORRIGIDO
+                                            // Hora (procura super flexível)
                                             let dateSpan = parentTd.querySelector('.date, .time, [id*="lbl_date"]');
                                             if (!dateSpan && parentTd.previousElementSibling) {
                                                 dateSpan = parentTd.previousElementSibling.querySelector('.date, .time');
                                             }
-                                            if (dateSpan) {
-                                                dataHoraCampo = dateSpan.innerText.trim();
+                                            if (!dateSpan && parentTd.parentElement) {
+                                                dateSpan = parentTd.parentElement.querySelector('.date, .time');
                                             }
+                                            if (dateSpan) dataHoraCampo = dateSpan.innerText.trim();
 
-                                            // Extração da RONDA (Hack de Coordenadas Visuais Otimizado) - CORRIGIDO
-                                            const ths = Array.from(document.querySelectorAll('th, td.header-round, .round-header'));
-                                            const validThs = ths.filter(th => th.innerText && th.innerText.trim() !== '' && !th.innerText.includes('\n'));
-
-                                            if (validThs.length > 0) {
-                                                const tdRect = parentTd.getBoundingClientRect();
-                                                let minDiff = Infinity;
-                                                let closestTh = validThs[0];
-
-                                                validThs.forEach(th => {
-                                                    const thRect = th.getBoundingClientRect();
-                                                    // Calculamos a distância ao centro da coluna (X)
-                                                    const thCenterX = thRect.left + (thRect.width / 2);
-                                                    const tdCenterX = tdRect.left + (tdRect.width / 2);
-                                                    const diff = Math.abs(thCenterX - tdCenterX);
-
-                                                    if (diff < minDiff && diff < 150) { // Tolerância de 150px
-                                                        minDiff = diff;
-                                                        closestTh = th;
-                                                    }
-                                                });
-
-                                                const extractedRound = closestTh.innerText.trim();
-                                                if (extractedRound && extractedRound !== "") {
-                                                    ronda = extractedRound;
-                                                }
-                                            }
+                                            const rect = parentTd.getBoundingClientRect();
+                                            jogosRaw.push({
+                                                categoria: siglaCat,
+                                                fase: nomeFase,
+                                                equipa_a: equipaA,
+                                                equipa_b: equipaB,
+                                                resultado: scoreEl.innerText.trim() || 'Pendente',
+                                                data_hora_campo: dataHoraCampo,
+                                                x: rect.left,
+                                                isTableDraw: !!parentTd.closest('table.new_draw')
+                                            });
                                         }
-
-                                        jogos.push({
-                                            categoria: siglaCat,
-                                            fase: nomeFase,
-                                            ronda: ronda,
-                                            equipa_a: equipaA,
-                                            equipa_b: equipaB,
-                                            resultado: scoreEl.innerText.trim() || 'Pendente',
-                                            data_hora_campo: dataHoraCampo
-                                        });
                                     }
                                 }
                             });
 
-                            return { duplas, jogos };
+                            // Agrupar e Calcular a Ronda Matemáticamente com base na coluna (Eixo X)
+                            const drawMatches = jogosRaw.filter(j => j.isTableDraw);
+                            const otherMatches = jogosRaw.filter(j => !j.isTableDraw);
+
+                            if (drawMatches.length > 0) {
+                                // Recolhe todos os eixos X (agrupando os que diferem em menos de 50px)
+                                const xCoords = [];
+                                drawMatches.forEach(j => {
+                                    if (!xCoords.some(x => Math.abs(x - j.x) < 50)) {
+                                        xCoords.push(j.x);
+                                    }
+                                });
+                                // Ordena as colunas da esquerda para a direita (Primeira Ronda -> Final)
+                                xCoords.sort((a, b) => a - b);
+
+                                const totalRondas = xCoords.length;
+                                // Da coluna mais à direita (Final) para a esquerda
+                                const roundNamesEndToStart = ["Final", "Meias-Finais", "Quartos-de-final", "Oitavos-de-final", "1/16", "1/32", "1/64"];
+
+                                drawMatches.forEach(j => {
+                                    const colIndex = xCoords.findIndex(x => Math.abs(x - j.x) < 50);
+                                    // Índice começando do fim (Final = 0, Meias = 1...)
+                                    const fromEnd = totalRondas - colIndex - 1;
+
+                                    let ronda = "Fase " + (colIndex + 1);
+                                    if (fromEnd < roundNamesEndToStart.length) {
+                                        ronda = roundNamesEndToStart[fromEnd];
+                                    }
+                                    j.ronda = ronda;
+                                    jogos.push(j);
+                                });
+                            }
+
+                            // Jogos de Fase de grupos (nao-arvore) ou casos especiais
+                            otherMatches.forEach(j => {
+                                j.ronda = 'Fase de Grupos';
+                                jogos.push(j);
+                            });
+
+                            // Devolver a lista limpa (remover .x e .isTableDraw)
+                            return { duplas, jogos: jogos.map(j => ({
+                                    categoria: j.categoria,
+                                    fase: j.fase,
+                                    ronda: j.ronda,
+                                    equipa_a: j.equipa_a,
+                                    equipa_b: j.equipa_b,
+                                    resultado: j.resultado,
+                                    data_hora_campo: j.data_hora_campo
+                                }))};
                         }, cat.sigla, fase.nome);
                         // ====== FIM DA EXTRAÇÃO ======
 

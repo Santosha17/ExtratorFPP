@@ -82,13 +82,39 @@ async function carregarEquipas() {
 async function upsertJogadores(plantel, idEquipaDB) {
     if (plantel.length === 0) return false;
 
+    const fppIds = plantel.map(j => j.fpp_id);
+    let existingJogadoresMap = {};
+
+    try {
+        // Obter pontos atuais para evitar subscrever por 0
+        const resExisting = await fetch(`${SUPABASE_URL}/rest/v1/jogadores?select=fpp_id,pontos_fpp&fpp_id=in.(${fppIds.join(',')})`, {
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+        });
+        if (resExisting.ok) {
+            const existingData = await resExisting.json();
+            existingData.forEach(j => {
+                existingJogadoresMap[j.fpp_id] = j.pontos_fpp || 0;
+            });
+        }
+    } catch (e) {
+        console.warn("   ⚠️ Não foi possível obter jogadores existentes.");
+    }
+
     // 2.1 Dados do Jogador (Apenas para a tabela 'jogadores')
-    const jogadores = plantel.map(j => ({
-        fpp_id: j.fpp_id,
-        nome: j.nome,
-        pontos_fpp: j.pontos_fpp,
-        updated_at: j.updated_at
-    }));
+    const jogadores = plantel.map(j => {
+        const currentPoints = existingJogadoresMap[j.fpp_id] || 0;
+        // Só atualizamos os pontos globais se os novos forem MAIORES que os atuais
+        const pointsToSave = (j.pontos_fpp > currentPoints) ? j.pontos_fpp : currentPoints;
+        return {
+            fpp_id: j.fpp_id,
+            nome: j.nome,
+            pontos_fpp: pointsToSave,
+            updated_at: j.updated_at
+        };
+    });
 
     // 2.2 Dados de Ligação (Para a tabela 'jogadores_equipas')
     // 🚀 ADICIONADO: A coluna pontos_equipa captura o ranking para esta equipa específica
@@ -99,7 +125,16 @@ async function upsertJogadores(plantel, idEquipaDB) {
     }));
 
     try {
-        // A) GRAVAR JOGADOR E PONTOS GLOBAIS
+        // A) REMOVER ÓRFÃOS (Quem está na DB para esta equipa, mas já não está no site)
+        await fetch(`${SUPABASE_URL}/rest/v1/jogadores_equipas?equipa_id=eq.${idEquipaDB}&fpp_id=not.in.(${fppIds.join(',')})`, {
+            method: 'DELETE',
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+        });
+
+        // B) GRAVAR JOGADOR E PONTOS GLOBAIS
         const resJogadores = await fetch(`${SUPABASE_URL}/rest/v1/jogadores?on_conflict=fpp_id`, {
             method: 'POST',
             headers: {
@@ -113,7 +148,7 @@ async function upsertJogadores(plantel, idEquipaDB) {
 
         if (!resJogadores.ok) throw new Error(await resJogadores.text());
 
-        // B) GRAVAR A LIGAÇÃO À EQUIPA E OS PONTOS ESPECÍFICOS DESSA EQUIPA
+        // C) GRAVAR A LIGAÇÃO À EQUIPA E OS PONTOS ESPECÍFICOS DESSA EQUIPA
         const resLigacoes = await fetch(`${SUPABASE_URL}/rest/v1/jogadores_equipas?on_conflict=fpp_id,equipa_id`, {
             method: 'POST',
             headers: {
