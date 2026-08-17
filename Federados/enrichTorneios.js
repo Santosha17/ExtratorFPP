@@ -1,4 +1,13 @@
 require('dotenv').config({ path: '../.env' });
+// Polyfill de WebSocket para Node.js < 22 (evita erro de Realtime no @supabase/supabase-js)
+if (typeof WebSocket === 'undefined') {
+    try {
+        globalThis.WebSocket = require('ws');
+    } catch (e) {
+        globalThis.WebSocket = class DummyWebSocket {};
+    }
+}
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createClient } = require('@supabase/supabase-js');
