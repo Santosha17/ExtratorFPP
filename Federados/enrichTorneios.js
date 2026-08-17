@@ -1,67 +1,137 @@
-require('dotenv').config({ path: '../.env' }); // Vai buscar o teu .env à pasta raiz
+require('dotenv').config({ path: '../.env' });
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const fetch = globalThis.fetch || require('node-fetch');
+const { createClient } = require('@supabase/supabase-js');
 
 puppeteer.use(StealthPlugin());
 
 const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
 const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
-const headersSupabase = {
-    'apikey': SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': 'return=minimal'
-};
-
-// Apaga os dados velhos do torneio antes de inserir os novos para não haver duplicados
-async function limparDadosAntigos(torneio_id) {
-    await fetch(`${SUPABASE_URL}/rest/v1/torneiosfpp_duplas?torneio_id=eq.${torneio_id}`, { method: 'DELETE', headers: headersSupabase });
-    await fetch(`${SUPABASE_URL}/rest/v1/torneiosfpp_matches?torneio_id=eq.${torneio_id}`, { method: 'DELETE', headers: headersSupabase });
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error("Credenciais do Supabase não encontradas no ficheiro .env!");
 }
 
-async function bulkInsert(tableName, dataArray) {
-    if (dataArray.length === 0) return;
-    await fetch(`${SUPABASE_URL}/rest/v1/${tableName}`, {
-        method: 'POST',
-        headers: headersSupabase,
-        body: JSON.stringify(dataArray)
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false }
+});
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Executa uma operação assíncrona com tentativas de repetição e backoff exponencial.
+ */
+async function withRetry(operation, maxRetries = 3, initialDelay = 1000) {
+    let attempt = 0;
+    let currentDelay = initialDelay;
+    while (attempt < maxRetries) {
+        try {
+            return await operation();
+        } catch (error) {
+            attempt++;
+            if (attempt >= maxRetries) {
+                throw error;
+            }
+            console.log(`      ⚠️ Falha temporária (${error.message || error}). A tentar novamente em ${currentDelay}ms (tentativa ${attempt}/${maxRetries})...`);
+            await delay(currentDelay);
+            currentDelay *= 2;
+        }
+    }
+}
+
+/**
+ * Apaga os dados antigos do torneio antes de inserir os novos para evitar duplicados.
+ */
+async function limparDadosAntigos(torneio_id) {
+    await withRetry(async () => {
+        const { error: errDuplas } = await supabase
+            .from('torneiosfpp_duplas')
+            .delete()
+            .eq('torneio_id', torneio_id);
+        if (errDuplas) throw new Error(`Erro ao apagar duplas antigas: ${errDuplas.message}`);
+
+        const { error: errMatches } = await supabase
+            .from('torneiosfpp_matches')
+            .delete()
+            .eq('torneio_id', torneio_id);
+        if (errMatches) throw new Error(`Erro ao apagar matches antigos: ${errMatches.message}`);
     });
+}
+
+/**
+ * Insere registos em lotes (chunks) com retry para evitar erros de payload e timeout.
+ */
+async function bulkInsert(tableName, dataArray, chunkSize = 100) {
+    if (!dataArray || dataArray.length === 0) return;
+    for (let i = 0; i < dataArray.length; i += chunkSize) {
+        const chunk = dataArray.slice(i, i + chunkSize);
+        await withRetry(async () => {
+            const { error } = await supabase
+                .from(tableName)
+                .insert(chunk);
+            if (error) {
+                throw new Error(`Erro ao inserir em ${tableName}: ${error.message}`);
+            }
+        });
+    }
 }
 
 (async () => {
     console.log("📥 A contactar Supabase para obter a lista de torneios...");
 
-    // Vamos buscar os torneios. Podes adicionar um ?limit=5 no URL para testar apenas os primeiros 5!
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/torneiosfpp?select=fpp_id,nome,url_tiepadel&url_tiepadel=not.is.null`, {
-        headers: headersSupabase
-    });
-    const torneios = await response.json();
+    let torneios = [];
+    try {
+        await withRetry(async () => {
+            const { data, error } = await supabase
+                .from('torneiosfpp')
+                .select('fpp_id, nome, url_tiepadel')
+                .not('url_tiepadel', 'is', null);
+
+            if (error) throw new Error(error.message);
+            torneios = data || [];
+        });
+    } catch (err) {
+        console.error("❌ Falha crítica ao obter lista de torneios do Supabase:", err.message);
+        process.exit(1);
+    }
 
     console.log(`🔍 Encontrados ${torneios.length} torneios para raspar.`);
 
-    const browser = await puppeteer.launch({ headless: true }); // Muda para false se quiseres ver a magia a acontecer no ecrã!
-    const page = await browser.newPage();
-
-    // Otimizar o Puppeteer para carregar páginas mais rápido (ignora imagens e CSS desnecessário)
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-        if (['image', 'stylesheet', 'font'].includes(req.resourceType())) req.abort();
-        else req.continue();
+    const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
 
-    for (const torneio of torneios) {
-        console.log(`\n🎾 A extrair: ${torneio.nome} (ID: ${torneio.fpp_id})`);
+    let totalSucesso = 0;
+    let totalSemQuadros = 0;
+    let totalErros = 0;
 
+    for (let i = 0; i < torneios.length; i++) {
+        const torneio = torneios[i];
+        console.log(`\n🎾 [${i + 1}/${torneios.length}] A extrair: ${torneio.nome} (ID: ${torneio.fpp_id})`);
+
+        let page = null;
         try {
-            await limparDadosAntigos(torneio.fpp_id);
-            await page.goto(torneio.url_tiepadel + "/Draws", { waitUntil: 'networkidle2' });
+            page = await browser.newPage();
+
+            // Otimizar o carregamento de páginas (ignora imagens, CSS e fontes desnecessárias)
+            await page.setRequestInterception(true);
+            page.on('request', (req) => {
+                const resourceType = req.resourceType();
+                if (['image', 'stylesheet', 'font'].includes(resourceType)) {
+                    req.abort().catch(() => {});
+                } else {
+                    req.continue().catch(() => {});
+                }
+            });
+
+            await page.goto(torneio.url_tiepadel + "/Draws", { waitUntil: 'networkidle2', timeout: 45000 });
 
             // Verificar se o torneio tem quadros (dropdown)
             const temQuadros = await page.evaluate(() => document.querySelector('select[id$="drop_tournaments"]') !== null);
             if (!temQuadros) {
                 console.log("   ⚠️ Quadros ainda não publicados.");
+                totalSemQuadros++;
                 continue;
             }
 
@@ -71,13 +141,22 @@ async function bulkInsert(tableName, dataArray) {
                 return Array.from(opts).slice(1).map(o => ({ value: o.value, sigla: o.innerText.trim() }));
             });
 
+            if (categorias.length === 0) {
+                console.log("   ⚠️ Sem categorias disponíveis no dropdown.");
+                totalSemQuadros++;
+                continue;
+            }
+
+            // Limpa dados antigos apenas após confirmar que há quadros a extrair
+            await limparDadosAntigos(torneio.fpp_id);
+
             for (const cat of categorias) {
                 console.log(`   ⏳ Categoria: ${cat.sigla}`);
 
                 try {
-                    // 1. O TRUQUE VITAL: Recarregar a página base limpa antes de cada categoria!
-                    await page.goto(torneio.url_tiepadel + "/Draws", { waitUntil: 'networkidle2', timeout: 30000 });
-                    await new Promise(r => setTimeout(r, 1000));
+                    // 1. Recarregar a página base limpa antes de cada categoria
+                    await page.goto(torneio.url_tiepadel + "/Draws", { waitUntil: 'networkidle2', timeout: 35000 });
+                    await delay(1000);
 
                     // 2. Verificar se o dropdown existe
                     const dropdownExiste = await page.evaluate(() => document.querySelector('select[id$="drop_tournaments"]') !== null);
@@ -86,11 +165,11 @@ async function bulkInsert(tableName, dataArray) {
                         continue;
                     }
 
-                    // 3. Selecionar a categoria e À ESPERA DA NAVEGAÇÃO
-                    const navPromiseCat = page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 5000 }).catch(() => {});
+                    // 3. Selecionar a categoria e aguardar navegação
+                    const navPromiseCat = page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 8000 }).catch(() => {});
                     await page.select('select[id$="drop_tournaments"]', cat.value);
                     await navPromiseCat;
-                    await new Promise(r => setTimeout(r, 1500)); // Margem extra de segurança
+                    await delay(1200);
 
                     // Apanhar as Fases (Ex: Grupos, Qualificação, Main)
                     const fases = await page.evaluate(() => {
@@ -103,12 +182,11 @@ async function bulkInsert(tableName, dataArray) {
                     let todosJogosCat = [];
 
                     for (const fase of fases) {
-                        // Se houver botões de fase, clica neles e ESPERA
                         if (fase.id) {
-                            const navPromiseFase = page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 5000 }).catch(() => {});
+                            const navPromiseFase = page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 8000 }).catch(() => {});
                             await page.click(`#${fase.id}`);
                             await navPromiseFase;
-                            await new Promise(r => setTimeout(r, 1500)); // Margem extra de segurança
+                            await delay(1200);
                         }
 
                         // ====== INÍCIO DA EXTRAÇÃO DO HTML ======
@@ -132,10 +210,15 @@ async function bulkInsert(tableName, dataArray) {
                                         };
 
                                         duplas.push({
-                                            categoria: siglaCat, fase: nomeFase,
+                                            categoria: siglaCat,
+                                            fase: nomeFase,
                                             cabeca_serie: tr.querySelector('span[id*="_lbl_dsc_"]')?.innerText.trim() || '',
-                                            nome_a: p1.innerText.trim(), licenca_a: getInfo(p1, 'lic'), pontos_a: getInfo(p1, 'ranking'),
-                                            nome_b: p2.innerText.trim(), licenca_b: getInfo(p2, 'lic'), pontos_b: getInfo(p2, 'ranking')
+                                            nome_a: p1.innerText.trim(),
+                                            licenca_a: getInfo(p1, 'lic'),
+                                            pontos_a: getInfo(p1, 'ranking'),
+                                            nome_b: p2.innerText.trim(),
+                                            licenca_b: getInfo(p2, 'lic'),
+                                            pontos_b: getInfo(p2, 'ranking')
                                         });
                                     }
                                 }
@@ -150,9 +233,15 @@ async function bulkInsert(tableName, dataArray) {
                                         const nomes = tdEquipa.innerText.split('/');
                                         if (nomes.length === 2) {
                                             duplas.push({
-                                                categoria: siglaCat, fase: nomeFase, cabeca_serie: '',
-                                                nome_a: nomes[0].trim(), licenca_a: 'N/A', pontos_a: '0',
-                                                nome_b: nomes[1].trim(), licenca_b: 'N/A', pontos_b: '0'
+                                                categoria: siglaCat,
+                                                fase: nomeFase,
+                                                cabeca_serie: '',
+                                                nome_a: nomes[0].trim(),
+                                                licenca_a: 'N/A',
+                                                pontos_a: '0',
+                                                nome_b: nomes[1].trim(),
+                                                licenca_b: 'N/A',
+                                                pontos_b: '0'
                                             });
                                         }
                                     }
@@ -179,7 +268,6 @@ async function bulkInsert(tableName, dataArray) {
 
                                         const parentTd = scoreEl.closest('td');
                                         if (parentTd) {
-                                            // Hora (procura super flexível)
                                             let dateSpan = parentTd.querySelector('.date, .time, [id*="lbl_date"]');
                                             if (!dateSpan && parentTd.previousElementSibling) {
                                                 dateSpan = parentTd.previousElementSibling.querySelector('.date, .time');
@@ -205,28 +293,24 @@ async function bulkInsert(tableName, dataArray) {
                                 }
                             });
 
-                            // Agrupar e Calcular a Ronda Matemáticamente com base na coluna (Eixo X)
+                            // Agrupar e Calcular a Ronda Matematicamente com base na coluna (Eixo X)
                             const drawMatches = jogosRaw.filter(j => j.isTableDraw);
                             const otherMatches = jogosRaw.filter(j => !j.isTableDraw);
 
                             if (drawMatches.length > 0) {
-                                // Recolhe todos os eixos X (agrupando os que diferem em menos de 50px)
                                 const xCoords = [];
                                 drawMatches.forEach(j => {
                                     if (!xCoords.some(x => Math.abs(x - j.x) < 50)) {
                                         xCoords.push(j.x);
                                     }
                                 });
-                                // Ordena as colunas da esquerda para a direita (Primeira Ronda -> Final)
                                 xCoords.sort((a, b) => a - b);
 
                                 const totalRondas = xCoords.length;
-                                // Da coluna mais à direita (Final) para a esquerda
                                 const roundNamesEndToStart = ["Final", "Meias-Finais", "Quartos-de-final", "Oitavos-de-final", "1/16", "1/32", "1/64"];
 
                                 drawMatches.forEach(j => {
                                     const colIndex = xCoords.findIndex(x => Math.abs(x - j.x) < 50);
-                                    // Índice começando do fim (Final = 0, Meias = 1...)
                                     const fromEnd = totalRondas - colIndex - 1;
 
                                     let ronda = "Fase " + (colIndex + 1);
@@ -238,14 +322,15 @@ async function bulkInsert(tableName, dataArray) {
                                 });
                             }
 
-                            // Jogos de Fase de grupos (nao-arvore) ou casos especiais
+                            // Jogos de Fase de grupos ou outros
                             otherMatches.forEach(j => {
                                 j.ronda = 'Fase de Grupos';
                                 jogos.push(j);
                             });
 
-                            // Devolver a lista limpa (remover .x e .isTableDraw)
-                            return { duplas, jogos: jogos.map(j => ({
+                            return {
+                                duplas,
+                                jogos: jogos.map(j => ({
                                     categoria: j.categoria,
                                     fase: j.fase,
                                     ronda: j.ronda,
@@ -253,7 +338,8 @@ async function bulkInsert(tableName, dataArray) {
                                     equipa_b: j.equipa_b,
                                     resultado: j.resultado,
                                     data_hora_campo: j.data_hora_campo
-                                }))};
+                                }))
+                            };
                         }, cat.sigla, fase.nome);
                         // ====== FIM DA EXTRAÇÃO ======
 
@@ -261,21 +347,42 @@ async function bulkInsert(tableName, dataArray) {
                         extraidos.jogos.forEach(j => { j.torneio_id = torneio.fpp_id; todosJogosCat.push(j); });
                     }
 
-                    // Gravar no Supabase (Por Categoria)
-                    if (todasDuplasCat.length > 0) await bulkInsert('torneiosfpp_duplas', todasDuplasCat);
-                    if (todosJogosCat.length > 0) await bulkInsert('torneiosfpp_matches', todosJogosCat);
+                    // Gravar no Supabase por Categoria (com batching e retry)
+                    if (todasDuplasCat.length > 0) {
+                        await bulkInsert('torneiosfpp_duplas', todasDuplasCat);
+                    }
+                    if (todosJogosCat.length > 0) {
+                        await bulkInsert('torneiosfpp_matches', todosJogosCat);
+                    }
 
                 } catch (catError) {
                     console.error(`      ❌ Falha na categoria ${cat.sigla}:`, catError.message);
                 }
             }
+
             console.log(`   ✅ Extração concluída para ${torneio.nome}.`);
+            totalSucesso++;
 
         } catch (e) {
             console.error(`   ❌ Falha ao processar o torneio ${torneio.nome}:`, e.message);
+            totalErros++;
+            // Pequeno intervalo de segurança caso haja instabilidade de rede
+            await delay(2000);
+        } finally {
+            if (page) {
+                await page.close().catch(() => {});
+            }
         }
     }
 
-    await browser.close();
-    console.log("\n🚀 Todos os Quadros extraídos com sucesso!");
+    await browser.close().catch(() => {});
+
+    console.log("\n=================================");
+    console.log("📊 Resumo da Extração de Torneios");
+    console.log("=================================");
+    console.log(`✅ Torneios extraídos com sucesso: ${totalSucesso}`);
+    console.log(`⚠️ Torneios sem quadros publicados: ${totalSemQuadros}`);
+    console.log(`❌ Torneios com falhas: ${totalErros}`);
+    console.log(`📋 Total de torneios analisados: ${torneios.length}`);
+    console.log("🏁 Processo finalizado!");
 })();
