@@ -102,11 +102,12 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             away_team: meta.away_team, data_jogo: dbDate, status: matchStatus,
             home_score: meta.home_score, away_score: meta.away_score
         };
+        if (meta.campo) payloadMatch.campo = meta.campo;
 
         let dbSuccess = false;
 
         if (!matchesDb || matchesDb.length === 0) {
-            const resCreateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
+            const resCreateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
             if (resCreateMatch.ok) {
                 dbSuccess = true;
                 const newMatch = await resCreateMatch.json();
@@ -116,7 +117,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             }
         } else {
             matchId = matchesDb[0].id;
-            const resUpdateMatch = await fetch(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
+            const resUpdateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
             if (resUpdateMatch.ok) {
                 dbSuccess = true;
             } else {
@@ -134,6 +135,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             if (!r.rubber_number) continue;
 
             const payloadDetail = { match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result };
+            if (r.campo) payloadDetail.campo = r.campo;
 
             const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id`;
             const resDetailCheck = await fetch(urlDetail, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
@@ -297,6 +299,10 @@ async function executarTarefaPuppeteer(task) {
                                 const arr = [];
                                 let subGrupoAtual = nomeGrupoPadrao;
 
+                                const ths = Array.from(document.querySelectorAll('table th')).map(th => th.innerText.trim());
+                                let campoColIdx = ths.findIndex(h => h.toUpperCase() === 'CAMPO');
+                                if (campoColIdx === -1) campoColIdx = ths.findIndex(h => h.toUpperCase() === 'LOCAL');
+
                                 document.querySelectorAll('table tr').forEach((tr, trIndex) => {
                                     if (tr.classList.contains('rgGroupHeader')) {
                                         const headerText = tr.innerText.trim();
@@ -309,11 +315,29 @@ async function executarTarefaPuppeteer(task) {
                                     const tds = Array.from(tr.querySelectorAll('td'));
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
                                     let matchScoreHome = null, matchScoreAway = null;
+                                    let campo = null;
 
                                     const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
                                     if (dashIdx > 0) {
                                         home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
                                         away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
+                                    }
+
+                                    if (campoColIdx !== -1 && tds[campoColIdx]) {
+                                        const campoTxt = tds[campoColIdx].innerText.trim();
+                                        if (campoTxt && campoTxt !== '-' && !campoTxt.includes('\n')) {
+                                            campo = campoTxt;
+                                        }
+                                    }
+
+                                    if (!campo && dashIdx > 0) {
+                                        for (let k = dashIdx + 2; k < tds.length; k++) {
+                                            const txt = tds[k].innerText.trim();
+                                            if (txt && txt !== '-' && !txt.includes('\n') && !txt.toUpperCase().includes('ALTERAR') && !/^\d+\s*-\s*\d+$/.test(txt)) {
+                                                campo = txt;
+                                                break;
+                                            }
+                                        }
                                     }
 
                                     const scoreTd = tds.find(td => /\b[0-3]\s*-\s*[0-3]\b/.test(td.innerText));
@@ -345,7 +369,7 @@ async function executarTarefaPuppeteer(task) {
                                         const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
                                         let temBotao = !!btnRubbers;
                                         let btnIdxToClick = temBotao ? trIndex : -1;
-                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, temBotao, btnIdxToClick, subGrupo: subGrupoAtual });
+                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, campo, temBotao, btnIdxToClick, subGrupo: subGrupoAtual });
                                     }
                                 });
                                 return arr;
@@ -358,7 +382,7 @@ async function executarTarefaPuppeteer(task) {
                                     const metaParaBD = {
                                         zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: meta.subGrupo || grupo,
                                         home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo,
-                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway, fase: task.fase || "Fase Regional"
+                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway, campo: meta.campo, fase: task.fase || "Fase Regional"
                                     };
 
                                     const agora = new Date();
@@ -414,6 +438,9 @@ async function executarTarefaPuppeteer(task) {
                                             return /^[\d\s\-\/\(\)\[\],]+$/.test(s) && /\d/.test(s);
                                         };
 
+                                        const thsRubbers = Array.from(document.querySelectorAll('table th')).map(th => th.innerText.trim());
+                                        const campoColIdxRubbers = thsRubbers.findIndex(h => h.toUpperCase() === 'CAMPO' || h.toUpperCase() === 'LOCAL');
+
                                         document.querySelectorAll('table tr').forEach(row => {
                                             const cells = Array.from(row.querySelectorAll('td, th'));
                                             const rowTexts = cells.map(cell => cell.innerText.trim());
@@ -422,6 +449,12 @@ async function executarTarefaPuppeteer(task) {
 
                                             if (rIndex !== -1) {
                                                 const rubberNum = parseInt(rowTexts[rIndex].replace('R', ''));
+
+                                                let rubberCampo = null;
+                                                if (campoColIdxRubbers !== -1 && cells[campoColIdxRubbers]) {
+                                                    const txt = cells[campoColIdxRubbers].innerText.trim();
+                                                    if (txt && txt !== '-') rubberCampo = txt;
+                                                }
 
                                                 let afterR = rowTexts.slice(rIndex + 1);
                                                 let cleaned = afterR.filter(t => !isDate(t) && !isGarbage(t) && !isCampo(t));
@@ -435,35 +468,36 @@ async function executarTarefaPuppeteer(task) {
                                                     if (isScore(cleaned[j])) {
                                                         scoreIdx = j;
                                                         break;
-                                                    }
-                                                }
+                                                     }
+                                                 }
 
-                                                if (scoreIdx !== -1) {
-                                                    scoreRaw = cleaned[scoreIdx];
-                                                    cleaned.splice(scoreIdx, 1);
-                                                }
+                                                 if (scoreIdx !== -1) {
+                                                     scoreRaw = cleaned[scoreIdx];
+                                                     cleaned.splice(scoreIdx, 1);
+                                                 }
 
-                                                if (cleaned.length >= 2) {
-                                                    homeRaw = cleaned[0];
-                                                    awayRaw = cleaned[1];
-                                                } else if (cleaned.length === 1) {
-                                                    homeRaw = cleaned[0];
-                                                }
+                                                 if (cleaned.length >= 2) {
+                                                     homeRaw = cleaned[0];
+                                                     awayRaw = cleaned[1];
+                                                 } else if (cleaned.length === 1) {
+                                                     homeRaw = cleaned[0];
+                                                 }
 
-                                                let homeDuo = cleanText(homeRaw);
-                                                let awayDuo = cleanText(awayRaw);
-                                                let score = cleanText(scoreRaw);
+                                                 let homeDuo = cleanText(homeRaw);
+                                                 let awayDuo = cleanText(awayRaw);
+                                                 let score = cleanText(scoreRaw);
 
-                                                if (homeDuo || awayDuo || score) {
-                                                    details.push({
-                                                        rubber_number: rubberNum,
-                                                        home_duo: homeDuo || 'A Definir',
-                                                        away_duo: awayDuo || 'A Definir',
-                                                        result: score
-                                                    });
-                                                }
-                                            }
-                                        });
+                                                 if (homeDuo || awayDuo || score) {
+                                                     details.push({
+                                                         rubber_number: rubberNum,
+                                                         home_duo: homeDuo || 'A Definir',
+                                                         away_duo: awayDuo || 'A Definir',
+                                                         result: score,
+                                                         campo: rubberCampo
+                                                     });
+                                                 }
+                                             }
+                                         });
                                         return details;
                                     });
 
