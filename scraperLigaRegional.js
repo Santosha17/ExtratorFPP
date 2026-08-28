@@ -1,4 +1,6 @@
 process.env.UV_THREADPOOL_SIZE = '128';
+const dns = require('node:dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config();
 const puppeteer = require('puppeteer');
 const url = require("node:url");

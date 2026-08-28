@@ -4,7 +4,12 @@
   "description": "Scrapers FPP (Liga e Pontos) separados",
   "main": "scraperLiga.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "scrape:regional": "node scraperLigaRegional.js",
+    "scrape:regional-vet": "node scraperLigaRegionalVET.js",
+    "scrape:liga": "node scraperLiga.js",
+    "scrape:jogadores": "node scraper_jogadores.js",
+    "scrape:pontos": "node scraperFppPontos.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

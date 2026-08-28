@@ -1,3 +1,5 @@
+const dns = require('node:dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
