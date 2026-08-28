@@ -3,7 +3,6 @@ const dns = require('node:dns');
 if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config();
 const puppeteer = require('puppeteer');
-const url = require("node:url");
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
 const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
@@ -28,14 +27,20 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 8A,8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud8AB/Draws" }
 ];
 
-// 🚀 LER OS ARGUMENTOS DO TERMINAL
+// 🚀 LER OS ARGUMENTOS DO TERMINAL (Suporta múltiplas zonas: --zona="Zona 1..." --zona="Zona 2..." ou --zona="Zona 1...|Zona 2...")
 const args = process.argv.slice(2);
 const getArg = (name) => {
     const arg = args.find(a => a.startsWith(`--${name}=`));
-    return arg ? arg.split('=')[1] : null;
+    return arg ? arg.split('=').slice(1).join('=') : null;
 };
 
-const FILTER_ZONA = getArg('zona');
+const getArgsList = (name) => {
+    const matches = args.filter(a => a.startsWith(`--${name}=`)).map(a => a.split('=').slice(1).join('='));
+    if (matches.length === 0) return [];
+    return matches.flatMap(m => m.split('|').map(s => s.trim()));
+};
+
+const ZONAS_FILTRO = getArgsList('zona');
 const FILTER_TIPO = getArg('tipo');
 const FILTER_CATEGORIA = getArg('categoria');
 const FILTER_GRUPO = getArg('grupo');
@@ -43,7 +48,7 @@ const FILTER_GRUPO = getArg('grupo');
 // Filtra logo a lista base antes de abrir o browser
 let torneiosAlvo = TORNEIOS_LIGA;
 if (FILTER_TIPO) torneiosAlvo = torneiosAlvo.filter(t => t.tipo === FILTER_TIPO);
-if (FILTER_ZONA) torneiosAlvo = torneiosAlvo.filter(t => t.nome === FILTER_ZONA);
+if (ZONAS_FILTRO.length > 0) torneiosAlvo = torneiosAlvo.filter(t => ZONAS_FILTRO.includes(t.nome));
 
 if (torneiosAlvo.length === 0) {
     console.log("⚠️ Nenhum torneio encontrado com os filtros fornecidos. A abortar.");
@@ -58,27 +63,16 @@ function gerarFilaDeTarefas() {
     let idCounter = 1;
     const FASE_NOME = "Fase Regional";
 
-    const zonasNormais = ["Zona 1A,1B,1C", "Zona 3A,3B,3C,3D", "Zona 4A,4B,4C,4D", "Zona 6A,6B", "Zona 7A,7B", "Zona 8A,8B"];
-    for (const z of zonasNormais) {
-        tasks.push({ id: idCounter++, nomeJob: "JOB1_ABS_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: null, grupo: null });
-    }
-
-    const zonasPesadas = ["Zona 2", "Zona 5"];
-    const catLigeiras = ["Femininos", "Masculinos 1", "Masculinos 2", "Masculinos 3"];
-    for (const z of zonasPesadas) {
-        for (const c of catLigeiras) {
-            tasks.push({ id: idCounter++, nomeJob: "JOB3_ABS_LIGEIRAS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: c, grupo: null });
-        }
-    }
-
-    const catPesadas = ["Masculinos 4", "Masculinos 5", "Masculinos 6"];
-    const grupos = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E", "Grupo F", "Grupo G", "Grupo H", "Grupo I"];
-    for (const z of zonasPesadas) {
-        for (const c of catPesadas) {
-            for (const g of grupos) {
-                tasks.push({ id: idCounter++, nomeJob: "JOB4_ABS_GRUPOS", fase: FASE_NOME, zona: z, tipo: "Absolutos", categoria: c, grupo: g });
-            }
-        }
+    for (const t of torneiosAlvo) {
+        tasks.push({
+            id: idCounter++,
+            nomeJob: `JOB_ABS_${t.nome.replace(/[^a-zA-Z0-9]/g, '_')}`,
+            fase: FASE_NOME,
+            zona: t.nome,
+            tipo: t.tipo || "Absolutos",
+            categoria: null,
+            grupo: null
+        });
     }
 
     return tasks;
@@ -122,17 +116,34 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
 
         const payloadMatch = {
-            epoca: "2026", fase: meta.fase || "Fase Regional", zona: meta.zona, tipo: meta.tipo,
-            categoria: meta.categoria, grupo: meta.grupo, home_team: meta.home_team,
-            away_team: meta.away_team, data_jogo: dbDate, status: matchStatus,
-            home_score: meta.home_score, away_score: meta.away_score
+            epoca: "2026",
+            fase: meta.fase || "Fase Regional",
+            zona: meta.zona,
+            tipo: meta.tipo,
+            categoria: meta.categoria,
+            grupo: meta.grupo,
+            home_team: meta.home_team,
+            away_team: meta.away_team,
+            data_jogo: dbDate,
+            status: matchStatus,
+            home_score: meta.home_score,
+            away_score: meta.away_score
         };
         if (meta.campo) payloadMatch.campo = meta.campo;
 
         let dbSuccess = false;
 
         if (!matchesDb || matchesDb.length === 0) {
-            const resCreateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches`, { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }, body: JSON.stringify(payloadMatch) });
+            const resCreateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches`, {
+                method: 'POST',
+                headers: {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                body: JSON.stringify(payloadMatch)
+            });
             if (resCreateMatch.ok) {
                 dbSuccess = true;
                 const newMatch = await resCreateMatch.json();
@@ -142,7 +153,15 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
             }
         } else {
             matchId = matchesDb[0].id;
-            const resUpdateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadMatch) });
+            const resUpdateMatch = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches?id=eq.${matchId}`, {
+                method: 'PATCH',
+                headers: {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payloadMatch)
+            });
             if (resUpdateMatch.ok) {
                 dbSuccess = true;
             } else {
@@ -159,7 +178,13 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         for (const r of jogosExtraidos) {
             if (!r.rubber_number) continue;
 
-            const payloadDetail = { match_id: matchId, rubber_number: r.rubber_number, home_duo: r.home_duo, away_duo: r.away_duo, result: r.result };
+            const payloadDetail = {
+                match_id: matchId,
+                rubber_number: r.rubber_number,
+                home_duo: r.home_duo,
+                away_duo: r.away_duo,
+                result: r.result
+            };
             if (r.campo) payloadDetail.campo = r.campo;
 
             const urlDetail = `${SUPABASE_URL}/rest/v1/match_details?match_id=eq.${matchId}&rubber_number=eq.${r.rubber_number}&select=id`;
@@ -171,7 +196,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
                 await fetchWithRetry(`${SUPABASE_URL}/rest/v1/match_details?id=eq.${detailId}`, {
                     method: 'PATCH',
                     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ home_duo: r.home_duo, away_duo: r.away_duo, result: r.result })
+                    body: JSON.stringify({ home_duo: r.home_duo, away_duo: r.away_duo, result: r.result, ...(r.campo ? { campo: r.campo } : {}) })
                 });
             } else {
                 await fetchWithRetry(`${SUPABASE_URL}/rest/v1/match_details`, {
@@ -187,7 +212,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
 }
 
 // -----------------------------------------------------------------------------
-// 🚀 NOVA FUNÇÃO: ATUALIZAR HEARTBEAT NO SUPABASE
+// 🚀 ATUALIZAR HEARTBEAT NO SUPABASE
 // -----------------------------------------------------------------------------
 async function atualizarHeartbeat() {
     try {
@@ -220,7 +245,6 @@ async function executarTarefaPuppeteer(task) {
     const prefix = `[SUB-MÁQUINA ${task.id} | ${task.nomeJob}]`;
     console.log(`${prefix} A arrancar: Zona=${task.zona} | Cat=${task.categoria || 'Todas'} | Grupo=${task.grupo || 'Todos'}`);
 
-    // 🔥 O AUTO-RETRY: Função que espera pacientemente se o site for lento! 🔥
     const safeEvaluate = async (pageToEval, evaluateFn, ...args) => {
         let lastError;
         for (let i = 0; i < 4; i++) {
@@ -231,11 +255,11 @@ async function executarTarefaPuppeteer(task) {
                 if (e.message.includes("Execution context was destroyed") || e.message.includes("Target closed")) {
                     await new Promise(r => setTimeout(r, 3500));
                 } else {
-                    throw e; // Se for outro erro qualquer, atira logo
+                    throw e;
                 }
             }
         }
-        throw lastError; // Se falhou 4 vezes seguidas, desiste e atira erro
+        throw lastError;
     };
 
     const torneiosAlvo = TORNEIOS_LIGA.filter(t => t.nome === task.zona && t.tipo === task.tipo);
@@ -276,7 +300,7 @@ async function executarTarefaPuppeteer(task) {
                     await page.goto(torneio.url, { waitUntil: 'networkidle2' });
                     await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 10000 });
                     await page.select('#drop_tournaments', cat.valor);
-                    await new Promise(r => setTimeout(r, 4000));
+                    await new Promise(r => setTimeout(r, 3500));
 
                     const clicouEncontros = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a, span, div'));
@@ -286,12 +310,12 @@ async function executarTarefaPuppeteer(task) {
                     });
 
                     if (!clicouEncontros) continue;
-                    await new Promise(r => setTimeout(r, 4000));
+                    await new Promise(r => setTimeout(r, 3500));
 
                     const grupos = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a'));
                         return links.map(l => l.innerText.trim()).filter(text => 
-                            text.includes("Grupo") || text === "Main" || 
+                            text.includes("Grupo") || 
                             text.includes("Série") || text.includes("Serie") || 
                             text.includes("Poule") || text.includes("-QP") ||
                             text.includes("-QLL") || text.includes("Eliminatória") ||
@@ -299,7 +323,7 @@ async function executarTarefaPuppeteer(task) {
                         );
                     });
 
-                    const listaDeGrupos = grupos.length > 0 ? grupos : ["Main"];
+                    const listaDeGrupos = grupos.length > 0 ? grupos : ["Fase Única"];
 
                     for (const grupo of listaDeGrupos) {
                         try {
@@ -317,7 +341,7 @@ async function executarTarefaPuppeteer(task) {
                                         if (target) target.click();
                                     }, grupo)
                                 ]);
-                                await new Promise(r => setTimeout(r, 3000));
+                                await new Promise(r => setTimeout(r, 2500));
                             }
 
                             const metadadosJogos = await safeEvaluate(page, (nomeGrupoPadrao) => {
@@ -328,7 +352,7 @@ async function executarTarefaPuppeteer(task) {
                                 let campoColIdx = ths.findIndex(h => h.toUpperCase() === 'CAMPO');
                                 if (campoColIdx === -1) campoColIdx = ths.findIndex(h => h.toUpperCase() === 'LOCAL');
 
-                                document.querySelectorAll('table tr').forEach((tr, trIndex) => {
+                                document.querySelectorAll('table tr').forEach((tr) => {
                                     if (tr.classList.contains('rgGroupHeader')) {
                                         const headerText = tr.innerText.trim();
                                         if (headerText) {
@@ -338,12 +362,14 @@ async function executarTarefaPuppeteer(task) {
                                     }
 
                                     const tds = Array.from(tr.querySelectorAll('td'));
+                                    if (tds.length < 3) return;
+
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
                                     let matchScoreHome = null, matchScoreAway = null;
                                     let campo = null;
 
                                     const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
-                                    if (dashIdx > 0) {
+                                    if (dashIdx > 0 && dashIdx + 1 < tds.length) {
                                         home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
                                         away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
                                     }
@@ -390,11 +416,20 @@ async function executarTarefaPuppeteer(task) {
                                         }
                                     }
 
-                                    if(home !== "Equipa Casa" && home !== "") {
+                                    if (home !== "Equipa Casa" && home !== "") {
                                         const btnRubbers = tr.querySelector('a[id*="link_open_rubbers"]');
-                                        let temBotao = !!btnRubbers;
-                                        let btnIdxToClick = temBotao ? trIndex : -1;
-                                        arr.push({ home, away, dataJogo, matchScoreHome, matchScoreAway, campo, temBotao, btnIdxToClick, subGrupo: subGrupoAtual });
+                                        const btnId = btnRubbers ? btnRubbers.id : null;
+                                        arr.push({
+                                            home,
+                                            away,
+                                            dataJogo,
+                                            matchScoreHome,
+                                            matchScoreAway,
+                                            campo,
+                                            temBotao: !!btnId,
+                                            btnId: btnId,
+                                            subGrupo: subGrupoAtual
+                                        });
                                     }
                                 });
                                 return arr;
@@ -405,17 +440,21 @@ async function executarTarefaPuppeteer(task) {
 
                                 try {
                                     const metaParaBD = {
-                                        zona: torneio.nome, tipo: torneio.tipo, categoria: cat.nome, grupo: meta.subGrupo || grupo,
-                                        home_team: meta.home, away_team: meta.away, data_jogo: meta.dataJogo,
-                                        home_score: meta.matchScoreHome, away_score: meta.matchScoreAway, campo: meta.campo, fase: task.fase || "Fase Regional"
+                                        zona: torneio.nome,
+                                        tipo: torneio.tipo,
+                                        categoria: cat.nome,
+                                        grupo: meta.subGrupo || grupo,
+                                        home_team: meta.home,
+                                        away_team: meta.away,
+                                        data_jogo: meta.dataJogo,
+                                        home_score: meta.matchScoreHome,
+                                        away_score: meta.matchScoreAway,
+                                        campo: meta.campo,
+                                        fase: task.fase || "Fase Regional"
                                     };
 
-                                    const agora = new Date();
-                                    const dataDoJogo = meta.dataJogo ? new Date(meta.dataJogo.replace(' ', 'T')) : null;
-                                    const isFuturo = dataDoJogo && dataDoJogo > agora;
-
-                                    if (!meta.temBotao || isFuturo) {
-                                        console.log(`${prefix}       ⏳ ${meta.home} vs ${meta.away}: Agendado para ${meta.dataJogo}.`);
+                                    if (!meta.temBotao || !meta.btnId) {
+                                        console.log(`${prefix}       ⏳ ${meta.home} vs ${meta.away}: Sem detalhes/duplas anunciadas (${meta.dataJogo || 'Sem data'}).`);
                                         await guardarNoSupabaseEmTempoReal(metaParaBD, [], prefix);
                                         continue;
                                     }
@@ -423,19 +462,19 @@ async function executarTarefaPuppeteer(task) {
                                     console.log(`${prefix}       -> A processar: ${meta.home} vs ${meta.away}...`);
 
                                     await safeEvaluate(page, () => {
-                                        const grid = document.querySelector('table[id*="grid_rubbers"] tbody');
+                                        const grid = document.querySelector('table[id*="grid_matches_rubbers"] tbody') || document.querySelector('table[id*="grid_rubbers"] tbody');
                                         if (grid) grid.innerHTML = '';
                                     });
 
                                     await Promise.all([
-                                        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
-                                        safeEvaluate(page, (idx) => {
-                                            const btns = document.querySelectorAll('table tr')[idx]?.querySelectorAll('a[id*="link_open_rubbers"]');
-                                            if (btns && btns.length > 0) btns[0].click();
-                                        }, meta.btnIdxToClick)
+                                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {}),
+                                        safeEvaluate(page, (btnId) => {
+                                            const btn = document.getElementById(btnId);
+                                            if (btn) btn.click();
+                                        }, meta.btnId)
                                     ]);
 
-                                    await new Promise(r => setTimeout(r, 4500));
+                                    await new Promise(r => setTimeout(r, 3500));
 
                                     const jogosExtraidos = await safeEvaluate(page, () => {
                                         const details = [];
@@ -533,25 +572,14 @@ async function executarTarefaPuppeteer(task) {
                                 } finally {
                                     try {
                                         await Promise.all([
-                                            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                                            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {}),
                                             safeEvaluate(page, () => {
-                                                const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
+                                                const btn = document.getElementById('link_back_matches_list') || 
+                                                            Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.trim().toUpperCase() === 'VOLTAR');
                                                 if (btn) btn.click();
                                             })
                                         ]);
-                                        await new Promise(r => setTimeout(r, 4500));
-                                        
-                                        if (grupo !== "Fase Única" && grupo !== "Fase Regular") {
-                                            await Promise.all([
-                                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
-                                                safeEvaluate(page, (nomeGrupo) => {
-                                                    const links = Array.from(document.querySelectorAll('a'));
-                                                    const target = links.find(l => l.innerText.trim() === nomeGrupo);
-                                                    if (target) target.click();
-                                                }, grupo)
-                                            ]);
-                                            await new Promise(r => setTimeout(r, 2500));
-                                        }
+                                        await new Promise(r => setTimeout(r, 3000));
                                     } catch(e) {}
                                 }
                             }
@@ -572,12 +600,12 @@ async function executarTarefaPuppeteer(task) {
 // 4. MOTOR PRINCIPAL
 // -----------------------------------------------------------------------------
 (async () => {
-    console.log("🚀 A iniciar a 'Aranha' PadelNetwork com Sub-Máquinas...");
+    console.log("🚀 A iniciar a 'Aranha' Regional...");
 
     let filaDeTarefas = gerarFilaDeTarefas();
 
     // 🔥 APLICAR OS FILTROS DO TERMINAL ÀS TAREFAS 🔥
-    if (FILTER_ZONA) filaDeTarefas = filaDeTarefas.filter(t => t.zona === FILTER_ZONA);
+    if (ZONAS_FILTRO.length > 0) filaDeTarefas = filaDeTarefas.filter(t => ZONAS_FILTRO.includes(t.zona));
     if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo === FILTER_TIPO);
 
     // Forçar a categoria e grupo na tarefa se o utilizador pedir pelo terminal
