@@ -40,15 +40,25 @@ const getArgsList = (name) => {
     return matches.flatMap(m => m.split('|').map(s => s.trim()));
 };
 
-const ZONAS_FILTRO = getArgsList('zona');
+const ZONAS_FILTRO = [...getArgsList('zona'), ...getArgsList('zonas'), ...getArgsList('fase')];
 const FILTER_TIPO = getArg('tipo');
 const FILTER_CATEGORIA = getArg('categoria');
 const FILTER_GRUPO = getArg('grupo');
 
+function matchZona(nomeTorneio, inputList) {
+    if (!inputList || inputList.length === 0) return true;
+    const clean = s => s.toLowerCase().replace(/^zona\s*/i, '').replace(/\s+/g, '');
+    const cleanNome = clean(nomeTorneio);
+    return inputList.some(inp => {
+        const cleanInp = clean(inp);
+        return cleanNome === cleanInp || cleanNome.includes(cleanInp) || cleanInp.includes(cleanNome);
+    });
+}
+
 // Filtra logo a lista base antes de abrir o browser
 let torneiosAlvo = TORNEIOS_LIGA;
-if (FILTER_TIPO) torneiosAlvo = torneiosAlvo.filter(t => t.tipo === FILTER_TIPO);
-if (ZONAS_FILTRO.length > 0) torneiosAlvo = torneiosAlvo.filter(t => ZONAS_FILTRO.includes(t.nome));
+if (FILTER_TIPO) torneiosAlvo = torneiosAlvo.filter(t => t.tipo.toLowerCase() === FILTER_TIPO.toLowerCase());
+if (ZONAS_FILTRO.length > 0) torneiosAlvo = torneiosAlvo.filter(t => matchZona(t.nome, ZONAS_FILTRO));
 
 if (torneiosAlvo.length === 0) {
     console.log("⚠️ Nenhum torneio encontrado com os filtros fornecidos. A abortar.");
@@ -605,8 +615,8 @@ async function executarTarefaPuppeteer(task) {
     let filaDeTarefas = gerarFilaDeTarefas();
 
     // 🔥 APLICAR OS FILTROS DO TERMINAL ÀS TAREFAS 🔥
-    if (ZONAS_FILTRO.length > 0) filaDeTarefas = filaDeTarefas.filter(t => ZONAS_FILTRO.includes(t.zona));
-    if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo === FILTER_TIPO);
+    if (ZONAS_FILTRO.length > 0) filaDeTarefas = filaDeTarefas.filter(t => matchZona(t.zona, ZONAS_FILTRO));
+    if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo.toLowerCase() === FILTER_TIPO.toLowerCase());
 
     // Forçar a categoria e grupo na tarefa se o utilizador pedir pelo terminal
     filaDeTarefas = filaDeTarefas.map(t => {
