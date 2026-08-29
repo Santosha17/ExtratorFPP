@@ -483,27 +483,74 @@ async function processarTorneioLive(torneio, browser, prefix) {
 
                             const jogosExtraidos = await safeEvaluate(page, () => {
                                 const details = [];
-                                const cleanText = (t) => t ? t.replace(/\s+/g, ' ').replace(/✔/g, '').trim() : '';
 
-                                const selector = 'table[id*="grid_matches_rubbers"] tbody tr, table[id*="grid_rubbers"] tbody tr';
-                                document.querySelectorAll(selector).forEach((tr) => {
-                                    const tds = Array.from(tr.querySelectorAll('td'));
-                                    if (tds.length >= 3) {
-                                        let rubberNum = null;
-                                        const numMatch = tds[0].innerText.match(/\d+/);
-                                        if (numMatch) rubberNum = parseInt(numMatch[0]);
+                                const cleanText = (text) => {
+                                    if (!text) return "";
+                                    return text
+                                        .replace(/✔/g, '')
+                                        .replace(/\n/g, ' / ')
+                                        .replace(/\s+/g, ' ')
+                                        .replace(/\s*\/\s*\/\s*/g, ' / ')
+                                        .replace(/^[\s/]+|[\s/]+$/g, '')
+                                        .trim();
+                                };
+
+                                const isDate = (t) => /\d{2,4}[-/]\d{2}[-/]\d{2,4}/.test(t);
+                                const isGarbage = (t) => t === '-' || t === '✔' || t === '';
+                                const isCampo = (t) => {
+                                    const s = t.toLowerCase().trim();
+                                    return s === 'tba' || /^(campo|court|pista|corte)\s*\d+/.test(s);
+                                };
+                                const isScore = (t) => {
+                                    const s = t.toLowerCase().trim();
+                                    if (/^(w\.o\.|w\.o|fc|desistência|desistencia|ret\.|ret)$/.test(s)) return true;
+                                    return /^[\d\s\-\/\(\)\[\],]+$/.test(s) && /\d/.test(s);
+                                };
+
+                                const thsRubbers = Array.from(document.querySelectorAll('table th')).map(th => th.innerText.trim());
+                                const campoColIdxRubbers = thsRubbers.findIndex(h => h.toUpperCase() === 'CAMPO' || h.toUpperCase() === 'LOCAL');
+
+                                document.querySelectorAll('table tr').forEach(row => {
+                                    const cells = Array.from(row.querySelectorAll('td, th'));
+                                    const rowTexts = cells.map(cell => cell.innerText.trim());
+
+                                    const rIndex = rowTexts.findIndex(txt => /^R[1-3]$/.test(txt));
+
+                                    if (rIndex !== -1) {
+                                        const rubberNum = parseInt(rowTexts[rIndex].replace('R', ''));
 
                                         let rubberCampo = null;
-                                        if (tds.length >= 5) {
-                                            const possibleCampo = cleanText(tds[4].innerText);
-                                            if (possibleCampo && !/\d+\s*-\s*\d+/.test(possibleCampo) && !possibleCampo.includes('/')) {
-                                                rubberCampo = possibleCampo;
+                                        if (campoColIdxRubbers !== -1 && cells[campoColIdxRubbers]) {
+                                            const txt = cells[campoColIdxRubbers].innerText.trim();
+                                            if (txt && txt !== '-') rubberCampo = txt;
+                                        }
+
+                                        let afterR = rowTexts.slice(rIndex + 1);
+                                        let cleaned = afterR.filter(t => !isDate(t) && !isGarbage(t) && !isCampo(t));
+
+                                        let homeRaw = '';
+                                        let awayRaw = '';
+                                        let scoreRaw = '';
+
+                                        let scoreIdx = -1;
+                                        for (let j = cleaned.length - 1; j >= 0; j--) {
+                                            if (isScore(cleaned[j])) {
+                                                scoreIdx = j;
+                                                break;
                                             }
                                         }
 
-                                        let homeRaw = tds[1]?.innerText || '';
-                                        let awayRaw = tds[2]?.innerText || '';
-                                        let scoreRaw = tds[3]?.innerText || '';
+                                        if (scoreIdx !== -1) {
+                                            scoreRaw = cleaned[scoreIdx];
+                                            cleaned.splice(scoreIdx, 1);
+                                        }
+
+                                        if (cleaned.length >= 2) {
+                                            homeRaw = cleaned[0];
+                                            awayRaw = cleaned[1];
+                                        } else if (cleaned.length === 1) {
+                                            homeRaw = cleaned[0];
+                                        }
 
                                         let homeDuo = cleanText(homeRaw);
                                         let awayDuo = cleanText(awayRaw);
@@ -530,8 +577,8 @@ async function processarTorneioLive(torneio, browser, prefix) {
                             if (rubbersMudaram || placarMudou) {
                                 await guardarNoSupabaseEmTempoReal(metaParaBD, jogosExtraidos, prefix);
 
-                                const duplasResumo = jogosExtraidos.map(r => `D${r.rubber_number}: ${r.result || 'a decorrer'}`).join(' | ');
-                                console.log(`${prefix} ⚡ [AO VIVO] ${meta.home} (${meta.matchScoreHome ?? '-'}) vs (${meta.matchScoreAway ?? '-'}) ${meta.away} -> [${duplasResumo || 'Duplas registadas'}]`);
+                                const duplasResumo = jogosExtraidos.map(r => `D${r.rubber_number}: ${r.home_duo} vs ${r.away_duo} [${r.result || 'a decorrer'}]`).join('\n       🏸 ');
+                                console.log(`${prefix} ⚡ [AO VIVO] ${meta.home} (${meta.matchScoreHome ?? '-'}) vs (${meta.matchScoreAway ?? '-'}) ${meta.away}\n       🏸 ${duplasResumo || 'Duplas registadas'}`);
 
                                 const isFinal = (meta.matchScoreHome !== null && meta.matchScoreAway !== null) && 
                                                 jogosExtraidos.length >= 3 && 
