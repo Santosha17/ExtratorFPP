@@ -5,6 +5,9 @@
   "main": "scraperLiga.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "watch:regional": "node liveWatcherLiga.js --live --interval=60",
+    "watch:regional:fast": "node liveWatcherLiga.js --live --interval=30",
+    "watch:regional:hoje": "node liveWatcherLiga.js",
     "scrape:regional": "node scraperLigaRegional.js",
     "scrape:regional-vet": "node scraperLigaRegionalVET.js",
     "scrape:liga": "node scraperLiga.js",
