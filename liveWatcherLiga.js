@@ -13,8 +13,9 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
     process.exit(1);
 }
 
-// 🚀 CONFIGURAÇÃO DAS ZONAS REGIONAIS
+// 🚀 CONFIGURAÇÃO DAS ZONAS REGIONAIS (ABSOLUTOS E VETERANOS)
 const TORNEIOS_LIGA = [
+    // Absolutos
     { nome: "Zona 1A,1B,1C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud1ABC/Draws" },
     { nome: "Zona 2", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud2/Draws" },
     { nome: "Zona 3A,3B,3C,3D", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
@@ -22,7 +23,11 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 5", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud5/Draws" },
     { nome: "Zona 6A,6B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud6AB/Draws" },
     { nome: "Zona 7A,7B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" },
-    { nome: "Zona 8A,8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud8AB/Draws" }
+    { nome: "Zona 8A,8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud8AB/Draws" },
+    // Veteranos
+    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
+    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud4ABCD/Draws" },
+    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" }
 ];
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
@@ -49,7 +54,7 @@ const CHECK_ALL_DATES = hasFlag('todos');
 const DATA_ALVO = getArg('data') || (CHECK_ALL_DATES ? null : new Date().toLocaleDateString('sv-SE'));
 
 const ZONAS_FILTRO = [...getArgsList('zona'), ...getArgsList('zonas'), ...getArgsList('fase')];
-const FILTER_TIPO = getArg('tipo');
+const FILTER_TIPO = getArg('tipo') || (args.some(a => a.toLowerCase().includes('vet')) ? 'Veteranos' : 'Absolutos');
 const FILTER_CATEGORIA = getArg('categoria');
 const FILTER_GRUPO = getArg('grupo');
 

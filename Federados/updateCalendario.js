@@ -1,3 +1,6 @@
+process.env.UV_THREADPOOL_SIZE = '128';
+const dns = require('node:dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config({ path: '../.env' });
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -19,7 +22,10 @@ const headersSupabase = {
     const ANO_ALVO = '2026'; // Podes mudar para '2025' para testar e encher a base de dados
     console.log(`🚀 A iniciar extração do calendário ${ANO_ALVO} via Puppeteer...`);
 
-    const browser = await puppeteer.launch({ headless: true }); // Execução silenciosa
+    const browser = await puppeteer.launch({ 
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] 
+    });
     const page = await browser.newPage();
 
     await page.goto("https://tour.tiesports.com/fpp/calendar_(tournaments)", { waitUntil: 'networkidle2' });

@@ -1,3 +1,6 @@
+process.env.UV_THREADPOOL_SIZE = '128';
+const dns = require('node:dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config({ path: '../.env' });
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -16,8 +19,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 (async () => {
     // Usamos o plugin Stealth para o Cloudflare não detetar que somos um bot
     const browser = await puppeteer.launch({ 
-        headless: false,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] 
     }); 
     
     const urlFpp = 'https://tour.tiesports.com/fpp/weekly_rankings';

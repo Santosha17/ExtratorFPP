@@ -1,3 +1,6 @@
+process.env.UV_THREADPOOL_SIZE = '128';
+const dns = require('node:dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config({ path: '../.env' });
 // Polyfill de WebSocket para Node.js < 22 (evita erro de Realtime no @supabase/supabase-js)
 if (typeof WebSocket === 'undefined') {
@@ -26,6 +29,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 });
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const args = process.argv.slice(2);
+const getArg = (name) => {
+    const arg = args.find(a => a.startsWith(`--${name}=`));
+    return arg ? arg.split('=').slice(1).join('=') : null;
+};
+const FILTER_ID = getArg('id');
+const FILTER_LIMIT = getArg('limit') ? parseInt(getArg('limit'), 10) : null;
+const APENAS_ATIVOS = args.includes('--ativos') || args.includes('--recentes');
 
 /**
  * Executa uma operação assíncrona com tentativas de repetição e backoff exponencial.
@@ -91,11 +103,23 @@ async function bulkInsert(tableName, dataArray, chunkSize = 100) {
     let torneios = [];
     try {
         await withRetry(async () => {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('torneiosfpp')
-                .select('fpp_id, nome, url_tiepadel')
+                .select('fpp_id, nome, url_tiepadel, data_inicio, data_fim')
                 .not('url_tiepadel', 'is', null);
 
+            if (FILTER_ID) {
+                query = query.eq('fpp_id', FILTER_ID);
+            }
+
+            if (APENAS_ATIVOS) {
+                const hoje = new Date();
+                const haSeteDias = new Date(hoje.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const daquiASeteDias = new Date(hoje.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                query = query.gte('data_fim', haSeteDias).lte('data_inicio', daquiASeteDias);
+            }
+
+            const { data, error } = await query;
             if (error) throw new Error(error.message);
             torneios = data || [];
         });
@@ -104,11 +128,15 @@ async function bulkInsert(tableName, dataArray, chunkSize = 100) {
         process.exit(1);
     }
 
+    if (FILTER_LIMIT && FILTER_LIMIT > 0) {
+        torneios = torneios.slice(0, FILTER_LIMIT);
+    }
+
     console.log(`🔍 Encontrados ${torneios.length} torneios para raspar.`);
 
     const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
 
     let totalSucesso = 0;

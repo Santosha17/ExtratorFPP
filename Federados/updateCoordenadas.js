@@ -1,3 +1,6 @@
+process.env.UV_THREADPOOL_SIZE = '128';
+const dns = require('node:dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config();
 if (!process.env.SUPABASE_URL_SN_LIGA) {
     require('dotenv').config({ path: '../.env' });

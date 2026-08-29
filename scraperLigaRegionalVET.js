@@ -18,27 +18,43 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 const MAX_CONCURRENCY = 12;
 
 const TORNEIOS_LIGA = [
-    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "" },
-    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "" },
-    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "" }
+    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
+    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud4ABCD/Draws" },
+    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" }
 ];
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
 const args = process.argv.slice(2);
 const getArg = (name) => {
     const arg = args.find(a => a.startsWith(`--${name}=`));
-    return arg ? arg.split('=')[1] : null;
+    return arg ? arg.split('=').slice(1).join('=') : null;
 };
 
-const FILTER_ZONA = getArg('zona');
-const FILTER_TIPO = getArg('tipo');
+const getArgsList = (name) => {
+    const matches = args.filter(a => a.startsWith(`--${name}=`)).map(a => a.split('=').slice(1).join('='));
+    if (matches.length === 0) return [];
+    return matches.flatMap(m => m.split('|').map(s => s.trim()));
+};
+
+const ZONAS_FILTRO = [...getArgsList('zona'), ...getArgsList('zonas'), ...getArgsList('fase')];
+const FILTER_TIPO = getArg('tipo') || 'Veteranos';
 const FILTER_CATEGORIA = getArg('categoria');
 const FILTER_GRUPO = getArg('grupo');
 
+function matchZona(nomeTorneio, inputList) {
+    if (!inputList || inputList.length === 0) return true;
+    const clean = s => s.toLowerCase().replace(/^zona\s*/i, '').replace(/\s+/g, '');
+    const cleanNome = clean(nomeTorneio);
+    return inputList.some(inp => {
+        const cleanInp = clean(inp);
+        return cleanNome === cleanInp || cleanNome.includes(cleanInp) || cleanInp.includes(cleanNome);
+    });
+}
+
 // Filtra logo a lista base antes de abrir o browser
 let torneiosAlvo = TORNEIOS_LIGA;
-if (FILTER_TIPO) torneiosAlvo = torneiosAlvo.filter(t => t.tipo === FILTER_TIPO);
-if (FILTER_ZONA) torneiosAlvo = torneiosAlvo.filter(t => t.nome === FILTER_ZONA);
+if (FILTER_TIPO) torneiosAlvo = torneiosAlvo.filter(t => t.tipo.toLowerCase() === FILTER_TIPO.toLowerCase());
+if (ZONAS_FILTRO.length > 0) torneiosAlvo = torneiosAlvo.filter(t => matchZona(t.nome, ZONAS_FILTRO));
 
 if (torneiosAlvo.length === 0) {
     console.log("⚠️ Nenhum torneio encontrado com os filtros fornecidos. A abortar.");
@@ -53,9 +69,8 @@ function gerarFilaDeTarefas() {
     let idCounter = 1;
     const FASE_NOME = "Fase Regional";
 
-    const zonasVet = ["Zona 3A,3B,3C,3D", "Zona 4A,4B,4C,4D", "Zona 7A,7B"];
-    for (const z of zonasVet) {
-        tasks.push({ id: idCounter++, nomeJob: "JOB5_VET_NORMAIS", fase: FASE_NOME, zona: z, tipo: "Veteranos", categoria: null, grupo: null });
+    for (const t of torneiosAlvo) {
+        tasks.push({ id: idCounter++, nomeJob: `JOB_VET_${t.nome.replace(/[^a-zA-Z0-9]/g, '_')}`, fase: FASE_NOME, zona: t.nome, tipo: "Veteranos", categoria: null, grupo: null });
     }
 
     return tasks;
