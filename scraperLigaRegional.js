@@ -14,7 +14,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 }
 
 // 🚀 NÚMERO MÁXIMO DE BROWSERS EM SIMULTÂNEO
-const MAX_CONCURRENCY = 6;
+const MAX_CONCURRENCY = 8;
 
 const TORNEIOS_LIGA = [
     { nome: "Zona 1A,1B,1C", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud1ABC/Draws" },
