@@ -378,10 +378,21 @@ async function executarTarefaPuppeteer(task) {
                                     let matchScoreHome = null, matchScoreAway = null;
                                     let campo = null;
 
-                                    const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
-                                    if (dashIdx > 0 && dashIdx + 1 < tds.length) {
-                                        home = tds[dashIdx - 1].innerText.replace(/✔/g, '').trim();
-                                        away = tds[dashIdx + 1].innerText.replace(/✔/g, '').trim();
+                                    const sepIdx = tds.findIndex(td => {
+                                        const txt = td.innerText.replace(/✔/g, '').trim();
+                                        return txt === '-' || /^[0-3]\s*[-/:]\s*[0-3]$/.test(txt) || /^vs$/i.test(txt);
+                                    });
+
+                                    if (sepIdx > 0 && sepIdx + 1 < tds.length) {
+                                        home = tds[sepIdx - 1].innerText.replace(/✔/g, '').trim();
+                                        away = tds[sepIdx + 1].innerText.replace(/✔/g, '').trim();
+
+                                        const sepTxt = tds[sepIdx].innerText.replace(/✔/g, '').trim();
+                                        const scoreMatch = sepTxt.match(/^([0-3])\s*[-/:]\s*([0-3])$/);
+                                        if (scoreMatch) {
+                                            matchScoreHome = parseInt(scoreMatch[1]);
+                                            matchScoreAway = parseInt(scoreMatch[2]);
+                                        }
                                     }
 
                                     if (campoColIdx !== -1 && tds[campoColIdx]) {
@@ -391,8 +402,8 @@ async function executarTarefaPuppeteer(task) {
                                         }
                                     }
 
-                                    if (!campo && dashIdx > 0) {
-                                        for (let k = dashIdx + 2; k < tds.length; k++) {
+                                    if (!campo && sepIdx > 0) {
+                                        for (let k = sepIdx + 2; k < tds.length; k++) {
                                             const txt = tds[k].innerText.trim();
                                             if (txt && txt !== '-' && !txt.includes('\n') && !txt.toUpperCase().includes('ALTERAR') && !/^\d+\s*-\s*\d+$/.test(txt)) {
                                                 campo = txt;
@@ -401,12 +412,15 @@ async function executarTarefaPuppeteer(task) {
                                         }
                                     }
 
-                                    const scoreTd = tds.find(td => /\b[0-3]\s*-\s*[0-3]\b/.test(td.innerText));
-                                    if (scoreTd) {
-                                        const parts = scoreTd.innerText.match(/\b([0-3])\s*-\s*([0-3])\b/);
-                                        if (parts) {
-                                            matchScoreHome = parseInt(parts[1]);
-                                            matchScoreAway = parseInt(parts[2]);
+                                    if (matchScoreHome === null || matchScoreAway === null) {
+                                        for (let td of tds) {
+                                            const txt = td.innerText.replace(/✔/g, '').trim();
+                                            const m = txt.match(/\b([0-3])\s*[-/:]\s*([0-3])\b/);
+                                            if (m && !/\d{4}/.test(txt)) {
+                                                matchScoreHome = parseInt(m[1]);
+                                                matchScoreAway = parseInt(m[2]);
+                                                break;
+                                            }
                                         }
                                     }
 
@@ -574,6 +588,31 @@ async function executarTarefaPuppeteer(task) {
                                         });
                                         return details;
                                     });
+
+                                    // Se o placar geral não estava no HTML mas as duplas têm resultados, calcula automaticamente
+                                    if ((metaParaBD.home_score === null || metaParaBD.away_score === null) && jogosExtraidos.length > 0) {
+                                        let hWins = 0, aWins = 0;
+                                        for (const r of jogosExtraidos) {
+                                            if (!r.result) continue;
+                                            const setMatches = r.result.match(/\b(\d{1,2})\s*[-/]\s*(\d{1,2})\b/g);
+                                            if (setMatches) {
+                                                let sH = 0, sA = 0;
+                                                for (const sm of setMatches) {
+                                                    const parts = sm.match(/(\d{1,2})\s*[-/]\s*(\d{1,2})/);
+                                                    if (parts) {
+                                                        if (parseInt(parts[1]) > parseInt(parts[2])) sH++;
+                                                        else if (parseInt(parts[2]) > parseInt(parts[1])) sA++;
+                                                    }
+                                                }
+                                                if (sH > sA) hWins++;
+                                                else if (sA > sH) aWins++;
+                                            }
+                                        }
+                                        if (hWins > 0 || aWins > 0) {
+                                            metaParaBD.home_score = hWins;
+                                            metaParaBD.away_score = aWins;
+                                        }
+                                    }
 
                                     await guardarNoSupabaseEmTempoReal(metaParaBD, jogosExtraidos, prefix);
 

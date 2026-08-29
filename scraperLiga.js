@@ -407,18 +407,28 @@ async function executarTarefaPuppeteer(task) {
                                     let home = "Equipa Casa", away = "Equipa Fora", dataJogo = null;
                                     let matchScoreHome = null, matchScoreAway = null;
 
-                                    const dashIdx = tds.findIndex(td => td.innerText.trim() === '-');
+                                    const sepIdx = tds.findIndex(td => {
+                                        const txt = td.innerText.replace(/✔/g, '').trim();
+                                        return txt === '-' || /^[0-3]\s*[-/:]\s*[0-3]$/.test(txt) || /^vs$/i.test(txt);
+                                    });
                                     let homeWonByFC = false;
                                     let awayWonByFC = false;
 
-                                    if (dashIdx > 0) {
-                                        const homeRaw = tds[dashIdx - 1].innerText.trim();
-                                        const awayRaw = tds[dashIdx + 1].innerText.trim();
+                                    if (sepIdx > 0 && sepIdx + 1 < tds.length) {
+                                        const homeRaw = tds[sepIdx - 1].innerText.trim();
+                                        const awayRaw = tds[sepIdx + 1].innerText.trim();
                                         home = homeRaw.replace(/✔/g, '').trim();
                                         away = awayRaw.replace(/✔/g, '').trim();
 
                                         if (homeRaw.includes('✔')) homeWonByFC = true;
                                         if (awayRaw.includes('✔')) awayWonByFC = true;
+
+                                        const sepTxt = tds[sepIdx].innerText.replace(/✔/g, '').trim();
+                                        const scoreMatch = sepTxt.match(/^([0-3])\s*[-/:]\s*([0-3])$/);
+                                        if (scoreMatch) {
+                                            matchScoreHome = parseInt(scoreMatch[1]);
+                                            matchScoreAway = parseInt(scoreMatch[2]);
+                                        }
                                     }
 
                                     const scoreTd = tds.find(td => /\b[0-3]\s*-\s*[0-3]\b/.test(td.innerText));
