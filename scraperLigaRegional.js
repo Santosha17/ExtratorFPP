@@ -103,6 +103,15 @@ async function fetchWithRetry(url, options = {}, retries = 8) {
     }
 }
 
+function cleanTeamName(name) {
+    if (!name) return "";
+    return name
+        .replace(/✔/g, '')
+        .replace(/[’‘`]/g, "'")
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function isPlaceholderTeam(name) {
     if (!name) return true;
     const n = name.toLowerCase().trim();
@@ -115,21 +124,39 @@ function isPlaceholderTeam(name) {
 }
 
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
-    if (isPlaceholderTeam(meta.home_team) || isPlaceholderTeam(meta.away_team)) {
+    const homeClean = cleanTeamName(meta.home_team);
+    const awayClean = cleanTeamName(meta.away_team);
+
+    if (isPlaceholderTeam(homeClean) || isPlaceholderTeam(awayClean)) {
         console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (placeholder/dados incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
         return;
     }
+
+    meta.home_team = homeClean;
+    meta.away_team = awayClean;
 
     let matchStatus = 'scheduled';
     if (meta.home_score !== null && meta.away_score !== null) matchStatus = 'completed';
 
     try {
         let matchId;
+        let matchesDb = [];
 
-        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&fase=eq.${encodeURIComponent(meta.fase || "Fase Regional")}&select=id`;
+        // 1. Pesquisa inteligente: procura ordem normal e ordem invertida casa/fora
+        const urlMatch = `${SUPABASE_URL}/rest/v1/matches?zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&or=(and(home_team.eq.${encodeURIComponent(homeClean)},away_team.eq.${encodeURIComponent(awayClean)}),and(home_team.eq.${encodeURIComponent(awayClean)},away_team.eq.${encodeURIComponent(homeClean)}))&select=id,home_score,away_score,status,home_team,away_team`;
 
         const resMatch = await fetchWithRetry(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-        const matchesDb = await resMatch.json();
+        if (resMatch && resMatch.ok) {
+            matchesDb = await resMatch.json();
+        }
+
+        if (!matchesDb || matchesDb.length === 0) {
+            const urlFallback = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(homeClean)}&away_team=eq.${encodeURIComponent(awayClean)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&select=id`;
+            const resFallback = await fetchWithRetry(urlFallback, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+            if (resFallback && resFallback.ok) {
+                matchesDb = await resFallback.json();
+            }
+        }
 
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
 
@@ -184,6 +211,15 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
                 dbSuccess = true;
             } else {
                 console.error(`${prefix} 🚨 ERRO a ATUALIZAR jogo na BD:`, await resUpdateMatch.text());
+            }
+
+            // Se existiam duplicados antigos na base de dados, elimina as cópias extras automaticamente!
+            if (matchesDb.length > 1) {
+                const extraIds = matchesDb.slice(1).map(m => m.id);
+                await fetchWithRetry(`${SUPABASE_URL}/rest/v1/matches?id=in.(${extraIds.join(',')})`, {
+                    method: 'DELETE',
+                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+                }).catch(() => {});
             }
         }
 
