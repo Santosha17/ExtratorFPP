@@ -103,12 +103,20 @@ async function fetchWithRetry(url, options = {}, retries = 8) {
     }
 }
 
+function isPlaceholderTeam(name) {
+    if (!name) return true;
+    const n = name.toLowerCase().trim();
+    if (n === "" || n === "equipa casa" || n === "equipa fora" || n === "unknown" || n === "a definir" || n === "tbd") return true;
+    if (/\bor\b/i.test(n)) return true; // ex: "Equipa A or Equipa B"
+    if (/\bvenc\.?\b/i.test(n) || /\bvencedor\b/i.test(n) || /\bwinner\b/i.test(n)) return true;
+    if (/\bderr\.?\b/i.test(n) || /\bderrotado\b/i.test(n) || /\bloser\b/i.test(n)) return true;
+    if (/^[a-z]\d+\s*[-/]\s*[a-z]\d+$/i.test(n)) return true;
+    return false;
+}
+
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
-    if (!meta.home_team || !meta.away_team || 
-        meta.home_team.trim() === "" || meta.away_team.trim() === "" ||
-        meta.home_team === "Equipa Casa" || meta.away_team === "Equipa Fora" ||
-        meta.home_team === "Unknown" || meta.away_team === "Unknown") {
-        console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (dados de equipa incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
+    if (isPlaceholderTeam(meta.home_team) || isPlaceholderTeam(meta.away_team)) {
+        console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (placeholder/dados incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
         return;
     }
 
