@@ -18,9 +18,9 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 const MAX_CONCURRENCY = 12;
 
 const TORNEIOS_LIGA = [
-    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
-    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud4ABCD/Draws" },
-    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" }
+    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMudVET3ABCD/Draws" },
+    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMudVET4ABCD/Draws" },
+    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMudVET7AB/Draws" }
 ];
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
@@ -583,8 +583,8 @@ async function executarTarefaPuppeteer(task) {
     let filaDeTarefas = gerarFilaDeTarefas();
 
     // 🔥 APLICAR OS FILTROS DO TERMINAL ÀS TAREFAS 🔥
-    if (FILTER_ZONA) filaDeTarefas = filaDeTarefas.filter(t => t.zona === FILTER_ZONA);
-    if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo === FILTER_TIPO);
+    if (ZONAS_FILTRO.length > 0) filaDeTarefas = filaDeTarefas.filter(t => matchZona(t.zona, ZONAS_FILTRO));
+    if (FILTER_TIPO) filaDeTarefas = filaDeTarefas.filter(t => t.tipo.toLowerCase() === FILTER_TIPO.toLowerCase());
 
     // Forçar a categoria e grupo na tarefa se o utilizador pedir pelo terminal
     filaDeTarefas = filaDeTarefas.map(t => {

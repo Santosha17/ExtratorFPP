@@ -25,9 +25,9 @@ const TORNEIOS_LIGA = [
     { nome: "Zona 7A,7B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" },
     { nome: "Zona 8A,8B", tipo: "Absolutos", url: "https://fpp.tiepadel.com/Tournaments/RegMud8AB/Draws" },
     // Veteranos
-    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud3ABCD/Draws" },
-    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud4ABCD/Draws" },
-    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMud7AB/Draws" }
+    { nome: "Zona 3A,3B,3C,3D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMudVET3ABCD/Draws" },
+    { nome: "Zona 4A,4B,4C,4D", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMudVET4ABCD/Draws" },
+    { nome: "Zona 7A,7B", tipo: "Veteranos", url: "https://fpp.tiepadel.com/Tournaments/RegMudVET7AB/Draws" }
 ];
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
