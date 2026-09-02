@@ -304,6 +304,42 @@ async function processarTorneio(torneio, browser, prefix) {
                         });
 
                         // 3. JOGOS EM QUADROS ELIMINATÓRIOS E MATRICIAIS
+                        const formatarScore = (str) => {
+                            if (!str) return 'Pendente';
+                            let s = str.trim();
+                            if (s === '' || s.toLowerCase() === 'pendente') return 'Pendente';
+                            if (/walkover/i.test(s)) return s.toLowerCase().includes('double') ? 'Double Walkover' : 'Walkover';
+
+                            let retd = '';
+                            if (/ret'?d/i.test(s)) {
+                                retd = " Ret'd";
+                                s = s.replace(/ret'?d/i, '').trim();
+                            }
+
+                            const setRegex = /(\d{1,2}\s*-\s*\d{1,2}(?:\s*\(\d{1,2}\))?|\[\s*\d{1,2}\s*-\s*\d{1,2}\s*\])/g;
+                            const matches = s.match(setRegex);
+
+                            if (matches && matches.length > 0) {
+                                const formattedSets = matches.map(m => {
+                                    return m.replace(/\s*-\s*/, '-')
+                                            .replace(/\s*\(\s*(\d+)\s*\)/, ' ($1)')
+                                            .replace(/\[\s*(\d+)-(\d+)\s*\]/, '[$1-$2]')
+                                            .trim();
+                                });
+                                return formattedSets.join(' ') + retd;
+                            }
+                            return s + retd;
+                        };
+
+                        const isSchedule = (name) => {
+                            if (!name) return true;
+                            const n = name.trim();
+                            if (n === '' || n.toLowerCase() === 'bye' || n.toLowerCase() === 'pendente') return true;
+                            if (/^\d{4}-\d{2}-\d{2}/.test(n) || /^\d{1,2}\/\d{1,2}/.test(n) || /^\d{1,2}:\d{2}/.test(n)) return true;
+                            if (/^[0-9][A-Z]\s*\/\s*[0-9][A-Z]$/i.test(n)) return true;
+                            return false;
+                        };
+
                         const jogosRaw = [];
 
                         document.querySelectorAll('span[id*="_lbl_score_"]').forEach(scoreEl => {
@@ -315,8 +351,8 @@ async function processarTorneio(torneio, browser, prefix) {
                                 const p1b = document.getElementById(`${pfx}_lbl_ply_${matchId}_b_1`)?.innerText.trim();
                                 const p2b = document.getElementById(`${pfx}_lbl_ply_${matchId}_b_2`)?.innerText.trim();
 
-                                const equipaA = [p1a, p2a].filter(Boolean).join(' / ');
-                                const equipaB = [p1b, p2b].filter(Boolean).join(' / ');
+                                let equipaA = [p1a, p2a].filter(Boolean).join(' / ');
+                                let equipaB = [p1b, p2b].filter(Boolean).join(' / ');
 
                                 if (equipaA && equipaB && !equipaA.toLowerCase().includes('bye') && !equipaB.toLowerCase().includes('bye')) {
                                     let dataHoraCampo = '';
@@ -332,6 +368,20 @@ async function processarTorneio(torneio, browser, prefix) {
                                         }
                                         if (dateSpan) dataHoraCampo = dateSpan.innerText.trim();
 
+                                        if (isSchedule(equipaA)) {
+                                            if (!dataHoraCampo && (/^\d{4}-\d{2}-\d{2}/.test(equipaA) || /^\d{1,2}\/\d{1,2}/.test(equipaA))) {
+                                                dataHoraCampo = equipaA;
+                                            }
+                                            equipaA = 'A definir';
+                                        }
+
+                                        if (isSchedule(equipaB)) {
+                                            if (!dataHoraCampo && (/^\d{4}-\d{2}-\d{2}/.test(equipaB) || /^\d{1,2}\/\d{1,2}/.test(equipaB))) {
+                                                dataHoraCampo = equipaB;
+                                            }
+                                            equipaB = 'A definir';
+                                        }
+
                                         const rect = parentTd.getBoundingClientRect();
                                         jogosRaw.push({
                                             torneio_id: torneioId,
@@ -339,7 +389,7 @@ async function processarTorneio(torneio, browser, prefix) {
                                             fase: nomeFase,
                                             equipa_a: equipaA,
                                             equipa_b: equipaB,
-                                            resultado: scoreEl.innerText.trim() || 'Pendente',
+                                            resultado: formatarScore(scoreEl.innerText),
                                             data_hora_campo: dataHoraCampo,
                                             x: rect.left,
                                             isTableDraw: !!parentTd.closest('table.new_draw')
