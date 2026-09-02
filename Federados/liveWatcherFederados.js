@@ -35,9 +35,100 @@ const CHECK_ALL = hasFlag('todos');
 const FILTER_ID = getArg('id');
 const FILTER_CATEGORIA = getArg('categoria');
 const FILTER_DATA = getArg('data');
-const APENAS_RECENTES = hasFlag('recentes') || hasFlag('ativos');
+const FORCE_RUN = hasFlag('force') || hasFlag('forcar');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// -----------------------------------------------------------------------------
+// ANALISADOR INTELIGENTE DE DATAS DO TORNEIO
+// -----------------------------------------------------------------------------
+const mesesMap = {
+    'jan': 0, 'feb': 1, 'fev': 1, 'mar': 2, 'apr': 3, 'abr': 3,
+    'may': 4, 'mai': 4, 'jun': 5, 'jul': 6, 'aug': 7, 'ago': 7,
+    'sep': 8, 'set': 8, 'oct': 9, 'out': 9, 'nov': 10, 'dec': 11, 'dez': 11
+};
+
+function parseTournamentDates(torneio) {
+    if (torneio.data_inicio && torneio.data_fim) {
+        return {
+            start: new Date(torneio.data_inicio + 'T00:00:00'),
+            end: new Date(torneio.data_fim + 'T23:59:59'),
+            formatted: `${torneio.data_inicio} a ${torneio.data_fim}`
+        };
+    }
+
+    if (torneio.data_corrida) {
+        const ano = torneio.ano || new Date().getFullYear();
+        const str = torneio.data_corrida.toLowerCase().trim();
+
+        // 1. "26 Feb - 1 Mar" (meses diferentes)
+        const diffMonthMatch = str.match(/^(\d{1,2})\s+([a-z]{3})\s*-\s*(\d{1,2})\s+([a-z]{3})/i);
+        if (diffMonthMatch) {
+            const d1 = parseInt(diffMonthMatch[1], 10);
+            const m1 = mesesMap[diffMonthMatch[2].toLowerCase()];
+            const d2 = parseInt(diffMonthMatch[3], 10);
+            const m2 = mesesMap[diffMonthMatch[4].toLowerCase()];
+            if (m1 !== undefined && m2 !== undefined) {
+                const s = new Date(ano, m1, d1, 0, 0, 0);
+                const e = new Date(ano, m2, d2, 23, 59, 59);
+                return {
+                    start: s,
+                    end: e,
+                    formatted: `${s.toLocaleDateString('pt-PT')} a ${e.toLocaleDateString('pt-PT')}`
+                };
+            }
+        }
+
+        // 2. "18 - 22 Mar" ou "1 - 8 Feb" (mesmo mês)
+        const sameMonthMatch = str.match(/^(\d{1,2})\s*-\s*(\d{1,2})\s+([a-z]{3})/i);
+        if (sameMonthMatch) {
+            const d1 = parseInt(sameMonthMatch[1], 10);
+            const d2 = parseInt(sameMonthMatch[2], 10);
+            const m = mesesMap[sameMonthMatch[3].toLowerCase()];
+            if (m !== undefined) {
+                const s = new Date(ano, m, d1, 0, 0, 0);
+                const e = new Date(ano, m, d2, 23, 59, 59);
+                return {
+                    start: s,
+                    end: e,
+                    formatted: `${s.toLocaleDateString('pt-PT')} a ${e.toLocaleDateString('pt-PT')}`
+                };
+            }
+        }
+
+        // 3. "20 Mar" (dia único)
+        const singleDayMatch = str.match(/^(\d{1,2})\s+([a-z]{3})/i);
+        if (singleDayMatch) {
+            const d = parseInt(singleDayMatch[1], 10);
+            const m = mesesMap[singleDayMatch[2].toLowerCase()];
+            if (m !== undefined) {
+                const s = new Date(ano, m, d, 0, 0, 0);
+                const e = new Date(ano, m, d, 23, 59, 59);
+                return {
+                    start: s,
+                    end: e,
+                    formatted: `${s.toLocaleDateString('pt-PT')}`
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+function isTournamentActiveToday(torneio, targetDateStr = null) {
+    const parsed = parseTournamentDates(torneio);
+    if (!parsed) return { active: true, reason: 'sem_datas_especificadas', parsed: null };
+
+    const targetDate = targetDateStr ? new Date(targetDateStr + 'T12:00:00') : new Date();
+
+    // Inclui 1 dia de margem antes (para publicação dos quadros) e 1 dia depois
+    const startWithMargin = new Date(parsed.start.getTime() - 24 * 60 * 60 * 1000);
+    const endWithMargin = new Date(parsed.end.getTime() + 24 * 60 * 60 * 1000);
+
+    const isActive = (targetDate >= startWithMargin && targetDate <= endWithMargin);
+    return { active: isActive, parsed, targetDate };
+}
 
 // -----------------------------------------------------------------------------
 // CACHE EM MEMÓRIA (FINGERPRINTING PARA DETETAR MUDANÇAS DE RESULTADO EM TEMPO REAL)
@@ -98,7 +189,6 @@ async function sincronizarJogoEmTempoReal(match, prefix = "") {
         return { alterado: false };
     }
 
-    const valorAnterior = stateCache.get(key);
     stateCache.set(key, val);
 
     try {
@@ -135,7 +225,7 @@ async function sincronizarJogoEmTempoReal(match, prefix = "") {
                 return { alterado: true, tipo: 'atualizado' };
             }
         } else {
-            // Jogo novo (ex: nova ronda ou quadro gerado a meio do torneio)
+            // Jogo novo
             await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp_matches`, {
                 method: 'POST',
                 headers: { ...headers, 'Prefer': 'return=minimal' },
@@ -260,7 +350,6 @@ async function processarTorneioLive(torneio, browser, prefix) {
                         const jogos = [];
                         const jogosRaw = [];
 
-                        // Extrair scores e duplas
                         document.querySelectorAll('span[id*="_lbl_score_"]').forEach(scoreEl => {
                             const idParts = scoreEl.id.split('_lbl_score_');
                             if (idParts.length === 2) {
@@ -418,8 +507,9 @@ async function executarCicloSentinela(cicloNum, torneios) {
 // ARRANQUE PRINCIPAL
 // -----------------------------------------------------------------------------
 (async () => {
+    const hojeStr = FILTER_DATA || new Date().toLocaleDateString('pt-PT');
     console.log("==========================================================");
-    console.log("🚀 A iniciar o Live Match Watcher de Torneios Federados...");
+    console.log(`🚀 Live Match Watcher de Federados | Data Atual: ${hojeStr}`);
     console.log("==========================================================");
 
     // 1. Obter lista de torneios
@@ -450,28 +540,53 @@ async function executarCicloSentinela(cicloNum, torneios) {
         process.exit(1);
     }
 
-    // Filtrar torneios ativos
-    if (!CHECK_ALL && !FILTER_ID) {
-        const hoje = FILTER_DATA || new Date().toISOString().split('T')[0];
-        const haQuatroDias = new Date(new Date(hoje).getTime() - 4 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const daquiAQuatroDias = new Date(new Date(hoje).getTime() + 4 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-        torneios = torneios.filter(t => {
-            if (t.data_fim && t.data_inicio) {
-                return t.data_fim >= haQuatroDias && t.data_inicio <= daquiAQuatroDias;
-            }
-            return true;
-        });
-    }
-
     if (torneios.length === 0) {
-        console.log("⚠️ Nenhum torneio ativo encontrado para monitorizar. Usa --todos ou --id=... para forçar.");
+        console.log(`⚠️ Torneio não encontrado na base de dados (${FILTER_ID || 'nenhum'}).`);
         process.exit(0);
     }
 
-    console.log(`📋 Torneios selecionados (${torneios.length}):`);
-    torneios.slice(0, 8).forEach(t => console.log(`   • ${t.nome} (ID: ${t.fpp_id})`));
-    if (torneios.length > 8) console.log(`   ... e mais ${torneios.length - 8} torneios.`);
+    // 2. Verificação de Datas
+    let torneiosAtivos = [];
+
+    if (CHECK_ALL || FORCE_RUN) {
+        torneiosAtivos = torneios;
+        if (FORCE_RUN) console.log("⚡ [MODO FORÇADO] A ignorar verificação de datas (--force ativo).");
+    } else if (FILTER_ID) {
+        // Se foi passado um torneio específico com --id
+        const t = torneios[0];
+        const check = isTournamentActiveToday(t, FILTER_DATA);
+
+        if (check.active) {
+            console.log(`✅ [DATA VÁLIDA] O torneio "${t.nome}" está agendado para ${check.parsed ? check.parsed.formatted : 'hoje'}. A iniciar monitorização...`);
+            torneiosAtivos = [t];
+        } else {
+            console.log(`\n📅 [VERIFICAÇÃO DE DATA] Torneio: "${t.nome}" (ID: ${t.fpp_id})`);
+            console.log(`   Período do torneio: ${check.parsed ? check.parsed.formatted : 'N/D'}`);
+            console.log(`   Data atual:         ${hojeStr}`);
+            console.log(`⚠️ O dia atual NÃO coincide com as datas do torneio.`);
+            console.log(`💡 Para forçar a execução mesmo fora de data, corre:`);
+            console.log(`   node Federados/liveWatcherFederados.js --id=${t.fpp_id} --live --interval=${INTERVAL_SECONDS} --force\n`);
+            process.exit(0);
+        }
+    } else {
+        // Modo Automático (Sem --id): descobre todos os torneios que estão ativos HOJE
+        torneiosAtivos = torneios.filter(t => {
+            const check = isTournamentActiveToday(t, FILTER_DATA);
+            return check.active;
+        });
+    }
+
+    if (torneiosAtivos.length === 0) {
+        console.log(`\n⚠️ Não existem torneios federados a decorrer hoje (${hojeStr}).`);
+        console.log(`💡 Podes usar --todos para ver todos os torneios ou --force para forçar a execução.`);
+        process.exit(0);
+    }
+
+    console.log(`📋 Torneios ativos para monitorizar (${torneiosAtivos.length}):`);
+    torneiosAtivos.forEach(t => {
+        const parsed = parseTournamentDates(t);
+        console.log(`   • ${t.nome} [${parsed ? parsed.formatted : 'Hoje'}] (ID: ${t.fpp_id})`);
+    });
 
     let ciclo = 1;
 
@@ -479,14 +594,19 @@ async function executarCicloSentinela(cicloNum, torneios) {
         console.log(`\n🔁 MODO SENTINELA ATIVO (Intervalo: ${INTERVAL_SECONDS}s). Pressione Ctrl+C para parar.\n`);
         while (true) {
             try {
-                await executarCicloSentinela(ciclo++, torneios);
+                // Em cada ciclo de um novo dia, re-avalia torneios ativos se estiver em modo automático
+                if (!FILTER_ID && !CHECK_ALL && !FORCE_RUN) {
+                    torneiosAtivos = torneios.filter(t => isTournamentActiveToday(t).active);
+                }
+
+                await executarCicloSentinela(ciclo++, torneiosAtivos);
             } catch (err) {
                 console.error("⚠️ Erro no ciclo sentinela:", err.message);
             }
             await delay(INTERVAL_SECONDS * 1000);
         }
     } else {
-        await executarCicloSentinela(1, torneios);
+        await executarCicloSentinela(1, torneiosAtivos);
         console.log("\n🏆 Verificação ao vivo concluída com sucesso!");
         process.exit(0);
     }
