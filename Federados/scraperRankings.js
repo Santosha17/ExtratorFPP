@@ -7,21 +7,25 @@ if (!process.env.SUPABASE_URL_SN_LIGA) {
     require('dotenv').config();
 }
 
+const fetch = globalThis.fetch || require('node-fetch');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const { createClient } = require('@supabase/supabase-js');
 
 puppeteer.use(StealthPlugin());
 
-const supabaseUrl = process.env.SUPABASE_URL_SN_LIGA;
-const supabaseServiceKey = process.env.SUPABASE_KEY_SN_LIGA;
+const SUPABASE_URL = process.env.SUPABASE_URL_SN_LIGA;
+const SUPABASE_KEY = process.env.SUPABASE_KEY_SN_LIGA;
 
-if (!supabaseUrl || !supabaseServiceKey) {
+if (!SUPABASE_URL || !SUPABASE_KEY) {
     throw new Error("Credenciais do Supabase não encontradas.");
 }
-const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-    auth: { persistSession: false }
-});
+
+const headersSupabase = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'resolution=merge-duplicates, return=minimal'
+};
 
 // 🚀 LER OS ARGUMENTOS DO TERMINAL
 const args = process.argv.slice(2);
@@ -54,7 +58,7 @@ const TODAS_CATEGORIAS = [
 ];
 
 // -----------------------------------------------------------------------------
-// INSERÇÃO EM LOTES COM RETRY NO SUPABASE
+// INSERÇÃO EM LOTES COM RETRY NO SUPABASE (VIA REST API DIRETO)
 // -----------------------------------------------------------------------------
 async function bulkUpsert(tableName, dataArray, onConflict, chunkSize = 200, prefix = "") {
     if (!dataArray || dataArray.length === 0) return;
@@ -62,17 +66,25 @@ async function bulkUpsert(tableName, dataArray, onConflict, chunkSize = 200, pre
     for (let i = 0; i < dataArray.length; i += chunkSize) {
         const chunk = dataArray.slice(i, i + chunkSize);
         for (let attempt = 1; attempt <= 3; attempt++) {
-            const { error } = await supabase
-                .from(tableName)
-                .upsert(chunk, { onConflict });
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/${tableName}?on_conflict=${encodeURIComponent(onConflict)}`, {
+                    method: 'POST',
+                    headers: headersSupabase,
+                    body: JSON.stringify(chunk)
+                });
 
-            if (!error) break;
+                if (res && res.ok) break;
 
-            if (attempt === 3) {
-                console.error(`${prefix} ❌ Erro ao guardar em ${tableName} (lote ${i}):`, error.message);
-            } else {
-                await delay(1000 * attempt);
+                if (attempt === 3) {
+                    const errText = res ? await res.text() : 'Sem resposta';
+                    console.error(`${prefix} ❌ Erro ao guardar em ${tableName} (lote ${i}):`, errText);
+                }
+            } catch (err) {
+                if (attempt === 3) {
+                    console.error(`${prefix} ❌ Erro de rede em ${tableName} (lote ${i}):`, err.message);
+                }
             }
+            await delay(1000 * attempt);
         }
     }
 }
