@@ -237,6 +237,17 @@ async function processarTorneio(torneio, browser, prefix) {
                         const duplas = [];
                         const jogos = [];
 
+                        const isNomeInvalido = (name) => {
+                            if (!name) return true;
+                            const n = name.trim().toLowerCase();
+                            if (n === '' || n === 'bye' || n === 'pendente' || n === 'a definir' || n === 'tbd') return true;
+                            if (n.includes('bye')) return true;
+                            if (n.includes('desist')) return true;
+                            if (/^\d{4}-\d{2}-\d{2}/.test(n) || /^\d{1,2}\/\d{1,2}/.test(n)) return true;
+                            if (/^[0-9][a-z]\s*\/\s*[0-9][a-z]$/i.test(n)) return true;
+                            return false;
+                        };
+
                         // 1. DUPLAS EM QUADROS DE ELIMINAÇÃO (table.new_draw)
                         document.querySelectorAll('table.new_draw tr').forEach(tr => {
                             const indexEl = tr.querySelector('.index');
@@ -256,7 +267,7 @@ async function processarTorneio(torneio, browser, prefix) {
                                     const nomeA = p1.innerText.trim();
                                     const nomeB = p2.innerText.trim();
 
-                                    if (nomeA && nomeB && !nomeA.toLowerCase().includes('bye') && !nomeB.toLowerCase().includes('bye')) {
+                                    if (!isNomeInvalido(nomeA) && !isNomeInvalido(nomeB)) {
                                         duplas.push({
                                             torneio_id: torneioId,
                                             categoria: siglaCat,
@@ -284,7 +295,7 @@ async function processarTorneio(torneio, browser, prefix) {
                                     if (nomes.length === 2) {
                                         const nA = nomes[0].trim();
                                         const nB = nomes[1].trim();
-                                        if (nA && nB && !nA.toLowerCase().includes('bye') && !nB.toLowerCase().includes('bye')) {
+                                        if (!isNomeInvalido(nA) && !isNomeInvalido(nB)) {
                                             duplas.push({
                                                 torneio_id: torneioId,
                                                 categoria: siglaCat,

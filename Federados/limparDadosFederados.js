@@ -86,7 +86,7 @@ function isSchedule(name) {
     // 1. LIMPAR DUPLAS "BYE"
     console.log("\n1️⃣  A eliminar duplas 'Bye' em torneiosfpp_duplas...");
     try {
-        const resDelBye = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp_duplas?or=(nome_a.ilike.*bye*,nome_b.ilike.*bye*)`, {
+        const resDelBye = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp_duplas?or=(nome_a.ilike.*bye*,nome_b.ilike.*bye*,nome_a.ilike.*desist*,nome_b.ilike.*desist*)`, {
             method: 'DELETE',
             headers: { ...headers, 'Prefer': 'return=representation' }
         });
