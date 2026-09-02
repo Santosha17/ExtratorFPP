@@ -13,6 +13,7 @@
     "scrape:federados": "node Federados/enrichTorneios.js --ativos",
     "scrape:federados:todos": "node Federados/enrichTorneios.js",
     "clean:federados": "node Federados/limparDadosFederados.js",
+    "scrape:rankings": "node Federados/scraperRankings.js",
     "scrape:regional": "node scraperLigaRegional.js",
     "scrape:regional-vet": "node scraperLigaRegionalVET.js",
     "scrape:liga": "node scraperLiga.js",
