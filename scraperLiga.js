@@ -181,7 +181,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
     try {
         let matchId;
 
-        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&grupo=eq.${encodeURIComponent(meta.grupo)}&select=id`;
+        let urlMatch = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&grupo=eq.${encodeURIComponent(meta.grupo)}&fase=eq.Fase%20Regular&select=id`;
 
         const resMatch = await fetchWithRetry(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         const matchesDb = await resMatch.json();

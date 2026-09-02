@@ -154,9 +154,10 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
     try {
         let matchId;
         let matchesDb = [];
+        const faseFiltro = meta.fase || "Fase Regional";
 
-        // 1. Pesquisa inteligente: procura ordem normal e ordem invertida casa/fora
-        const urlMatch = `${SUPABASE_URL}/rest/v1/matches?zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&or=(and(home_team.eq.${encodeURIComponent(homeClean)},away_team.eq.${encodeURIComponent(awayClean)}),and(home_team.eq.${encodeURIComponent(awayClean)},away_team.eq.${encodeURIComponent(homeClean)}))&select=id,home_score,away_score,status,home_team,away_team`;
+        // 1. Pesquisa inteligente: procura ordem normal e ordem invertida casa/fora dentro da mesma fase
+        const urlMatch = `${SUPABASE_URL}/rest/v1/matches?zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&fase=eq.${encodeURIComponent(faseFiltro)}&or=(and(home_team.eq.${encodeURIComponent(homeClean)},away_team.eq.${encodeURIComponent(awayClean)}),and(home_team.eq.${encodeURIComponent(awayClean)},away_team.eq.${encodeURIComponent(homeClean)}))&select=id,home_score,away_score,status,home_team,away_team`;
 
         const resMatch = await fetchWithRetry(urlMatch, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
         if (resMatch && resMatch.ok) {
@@ -164,7 +165,7 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         }
 
         if (!matchesDb || matchesDb.length === 0) {
-            const urlFallback = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(homeClean)}&away_team=eq.${encodeURIComponent(awayClean)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&select=id`;
+            const urlFallback = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(homeClean)}&away_team=eq.${encodeURIComponent(awayClean)}&zona=eq.${encodeURIComponent(meta.zona)}&categoria=eq.${encodeURIComponent(meta.categoria)}&fase=eq.${encodeURIComponent(faseFiltro)}&select=id`;
             const resFallback = await fetchWithRetry(urlFallback, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
             if (resFallback && resFallback.ok) {
                 matchesDb = await resFallback.json();
