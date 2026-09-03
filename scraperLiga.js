@@ -153,12 +153,62 @@ async function fetchWithRetry(url, options = {}, retries = 8) {
     }
 }
 
+function validarEquipaCategoria(teamName, categoria) {
+    if (!teamName || !categoria) return true;
+    const t = teamName.toUpperCase();
+    const c = categoria.toUpperCase();
+
+    // 1. Incompatibilidade de Género
+    const isFemCat = c.includes('FEMININ');
+    const isMascCat = c.includes('MASCULIN');
+
+    if (isFemCat) {
+        if (/\bM[2-6]\b/.test(t) || /\bM[3-6]\d\b/.test(t) || /\bMASC\b/.test(t)) {
+            return false;
+        }
+    }
+    if (isMascCat) {
+        if (/\bF[2-6]\b/.test(t) || /\bF[3-6]\d\b/.test(t) || /\bFEM\b/.test(t)) {
+            return false;
+        }
+    }
+
+    // 2. Incompatibilidade de Escalão em Absolutos (ex: equipa " F2" em Femininos 3..6)
+    const catNumMatch = c.match(/(?:FEMININOS|MASCULINOS)\s*([2-6])/);
+    if (catNumMatch) {
+        const catNum = catNumMatch[1];
+        const teamNumMatch = t.match(/\b[FM]([2-6])\b/);
+        if (teamNumMatch && teamNumMatch[1] !== catNum) {
+            return false;
+        }
+    }
+
+    // 3. Incompatibilidade de Escalão em Veteranos (ex: equipa "+35" em +40, +45, etc.)
+    const catVetMatch = c.match(/\+(\d{2})/);
+    if (catVetMatch) {
+        const catVet = catVetMatch[1];
+        const teamVetMatch = t.match(/\+(\d{2})/);
+        if (teamVetMatch && teamVetMatch[1] !== catVet) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
     // 🛡️ VALIDAÇÃO DE SEGURANÇA: Impedir gravação de jogos com equipas em branco ou inválidas
     if (!meta.home_team || !meta.away_team || 
         meta.home_team.trim() === "" || meta.away_team.trim() === "" ||
         meta.home_team === "Equipa Casa" || meta.away_team === "Equipa Fora") {
         console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado (dados de equipa incompletos): "${meta.home_team}" vs "${meta.away_team}"`);
+        ESTATISTICAS.jogosIgnoradosInvalidos++;
+        return;
+    }
+
+    // 🛡️ VALIDAÇÃO SEMÂNTICA: Impedir gravação de equipas com etiquetas de escalão conflitantes
+    if (!validarEquipaCategoria(meta.home_team, meta.categoria) || !validarEquipaCategoria(meta.away_team, meta.categoria)) {
+        console.warn(`${prefix} ⚠️ [VALIDAÇÃO] Jogo ignorado por conflito de escalão: "${meta.home_team}" vs "${meta.away_team}" não pertencem a "${meta.categoria}"`);
         ESTATISTICAS.jogosIgnoradosInvalidos++;
         return;
     }
@@ -187,6 +237,21 @@ async function guardarNoSupabaseEmTempoReal(meta, jogosExtraidos, prefix) {
         const matchesDb = await resMatch.json();
 
         const dbDate = meta.data_jogo ? meta.data_jogo.replace(' ', 'T') + '+00:00' : null;
+
+        // 🛡️ PREVENÇÃO DE DUPLICAÇÃO MULTI-CATEGORIA: Se o jogo já existe noutra categoria na mesma data
+        if (dbDate && (!matchesDb || matchesDb.length === 0)) {
+            const urlCrossCheck = `${SUPABASE_URL}/rest/v1/matches?home_team=eq.${encodeURIComponent(meta.home_team)}&away_team=eq.${encodeURIComponent(meta.away_team)}&data_jogo=eq.${encodeURIComponent(dbDate)}&fase=eq.Fase%20Regular&select=id,categoria`;
+            const resCrossCheck = await fetchWithRetry(urlCrossCheck, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+            const existingInOtherCat = await resCrossCheck.json();
+            if (existingInOtherCat && existingInOtherCat.length > 0) {
+                const outro = existingInOtherCat.find(m => m.categoria !== meta.categoria);
+                if (outro) {
+                    console.warn(`${prefix} ⚠️ [DUPLICADO IGNORADO] O encontro "${meta.home_team}" vs "${meta.away_team}" a ${meta.data_jogo} já existe na categoria "${outro.categoria}". A ignorar inserção duplicada em "${meta.categoria}".`);
+                    ESTATISTICAS.jogosIgnoradosInvalidos++;
+                    return;
+                }
+            }
+        }
 
         const payloadMatch = {
             epoca: "2026", fase: "Fase Regular", zona: meta.zona, tipo: meta.tipo,
@@ -341,28 +406,46 @@ async function executarTarefaPuppeteer(task) {
 
                 console.log(`\n${prefix} 🎾 A processar: ${torneio.tipo} > ${cat.nome}`);
                 try {
-                    await Promise.all([
-                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
-                        page.select('#drop_tournaments', cat.valor).catch(() => {})
-                    ]);
-                    await new Promise(r => setTimeout(r, 2500));
+                    // 1. Retornar SEMPRE à página base do torneio para repor o estado limpo
+                    await page.goto(torneio.url, { waitUntil: 'networkidle2', timeout: 25000 });
+                    await page.waitForSelector('#drop_tournaments', { visible: true, timeout: 15000 });
 
-                    const temEncontros = await safeEvaluate(page, () => {
+                    // 2. Selecionar a categoria e acionar a comutação ASP.NET
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {}),
+                        safeEvaluate(page, (val) => {
+                            const sel = document.querySelector('#drop_tournaments');
+                            if (sel) {
+                                sel.value = val;
+                                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                                if (typeof window.__doPostBack === 'function') {
+                                    window.__doPostBack('drop_tournaments', '');
+                                }
+                            }
+                        }, cat.valor)
+                    ]);
+                    await new Promise(r => setTimeout(r, 3000));
+
+                    // 3. Validação de sanidade: garantir que o Tiepadel realmente comutou para o escalão correto
+                    const catAtiva = await safeEvaluate(page, () => {
+                        const sel = document.querySelector('#drop_tournaments');
+                        return sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].innerText.trim() : '';
+                    });
+                    if (catAtiva && !catAtiva.toLowerCase().includes(cat.nome.toLowerCase()) && !cat.nome.toLowerCase().includes(catAtiva.toLowerCase())) {
+                        console.warn(`${prefix} ⚠️ [AVISO] Categoria ativa no Tiepadel ("${catAtiva}") não corresponde a "${cat.nome}". A saltar.`);
+                        continue;
+                    }
+
+                    // 4. Procurar e clicar no botão "ENCONTROS"
+                    const clicouEncontros = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a, span, div'));
-                        return links.reverse().some(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
+                        const encontrosLink = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
+                        if (encontrosLink) { encontrosLink.click(); return true; }
+                        return false;
                     });
 
-                    if (!temEncontros) continue;
-
-                    await Promise.all([
-                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
-                        safeEvaluate(page, () => {
-                            const links = Array.from(document.querySelectorAll('a, span, div'));
-                            const btn = links.reverse().find(l => l.innerText && l.innerText.trim().toUpperCase() === 'ENCONTROS');
-                            if (btn) btn.click();
-                        }).catch(() => {})
-                    ]);
-                    await new Promise(r => setTimeout(r, 2500));
+                    if (!clicouEncontros) continue;
+                    await new Promise(r => setTimeout(r, 3000));
 
                     const grupos = await safeEvaluate(page, () => {
                         const links = Array.from(document.querySelectorAll('a'));
