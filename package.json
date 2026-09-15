@@ -18,7 +18,9 @@
     "scrape:regional-vet": "node scraperLigaRegionalVET.js",
     "scrape:liga": "node scraperLiga.js",
     "scrape:jogadores": "node scraper_jogadores.js",
-    "scrape:pontos": "node scraperFppPontos.js"
+    "scrape:pontos": "node scraperFppPontos.js",
+    "sync:fip": "node FIP/fip_tournaments.js --todos",
+    "sync:fip:mapear": "node FIP/fip_tournaments.js --todos --mapear"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
