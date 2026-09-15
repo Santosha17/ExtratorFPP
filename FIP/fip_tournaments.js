@@ -3,6 +3,11 @@ if (!process.env.SUPABASE_URL_SN_LIGA) {
     require('dotenv').config();
 }
 
+// Compatibilidade para Node.js < 22 (evita erro de WebSocket no Supabase Realtime)
+if (typeof globalThis.WebSocket === 'undefined') {
+    globalThis.WebSocket = class DummyWebSocket {};
+}
+
 const { createClient } = require('@supabase/supabase-js');
 
 // --- CONFIGURAÇÕES DO SUPABASE ---
@@ -14,7 +19,10 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
     process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false },
+    realtime: { transport: globalThis.WebSocket }
+});
 
 const FIP_API = 'https://api-toledo.matchscorerlive.com/api';
 const FIP_HEADERS = {
