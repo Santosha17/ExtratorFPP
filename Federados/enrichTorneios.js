@@ -31,7 +31,7 @@ const FILTER_ID = getArg('id');
 const FILTER_LIMIT = getArg('limit') ? parseInt(getArg('limit'), 10) : null;
 const FILTER_CATEGORIA = getArg('categoria');
 const FILTER_ANO = getArg('ano');
-const MAX_CONCURRENCY = parseInt(getArg('concurrency') || '6', 10);
+const MAX_CONCURRENCY = parseInt(getArg('concurrency') || '4', 10);
 const APENAS_ATIVOS = args.includes('--ativos') || args.includes('--recentes');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -127,6 +127,28 @@ const safeEvaluate = async (pageToEval, evaluateFn, ...evalArgs) => {
 };
 
 // -----------------------------------------------------------------------------
+// HELPER: GARANTIR QUE A PÁGINA ESTÁ NO MENU DE QUADROS COM DROPDOWN
+// -----------------------------------------------------------------------------
+async function garantirDropdown(page, urlDraws, maxRetries = 3) {
+    for (let tentativa = 1; tentativa <= maxRetries; tentativa++) {
+        try {
+            const dropdown = await page.$('select[id$="drop_tournaments"], #drop_tournaments');
+            if (dropdown) return true;
+
+            await page.goto(urlDraws, { waitUntil: 'domcontentloaded', timeout: 25000 });
+            await page.waitForSelector('select[id$="drop_tournaments"], #drop_tournaments', { visible: true, timeout: 15000 });
+            return true;
+        } catch (err) {
+            if (tentativa === maxRetries) {
+                throw new Error(`Dropdown de categorias indisponível após ${maxRetries} tentativas: ${err.message}`);
+            }
+            await delay(1000 * tentativa);
+        }
+    }
+    return false;
+}
+
+// -----------------------------------------------------------------------------
 // PROCESSAMENTO DE UM TORNEIO
 // -----------------------------------------------------------------------------
 async function processarTorneio(torneio, browser, prefix) {
@@ -154,10 +176,19 @@ async function processarTorneio(torneio, browser, prefix) {
         if (urlDraws.endsWith('/')) urlDraws = urlDraws.slice(0, -1);
         if (!urlDraws.toLowerCase().endsWith('/draws')) urlDraws += '/Draws';
 
-        try {
-            await page.goto(urlDraws, { waitUntil: 'domcontentloaded', timeout: 20000 });
-            await page.waitForSelector('select[id$="drop_tournaments"], #drop_tournaments', { visible: true, timeout: 8000 });
-        } catch (e) {
+        let temQuadros = false;
+        for (let tentativa = 1; tentativa <= 2; tentativa++) {
+            try {
+                await page.goto(urlDraws, { waitUntil: 'domcontentloaded', timeout: 25000 });
+                await page.waitForSelector('select[id$="drop_tournaments"], #drop_tournaments', { visible: true, timeout: 15000 });
+                temQuadros = true;
+                break;
+            } catch (e) {
+                if (tentativa < 2) await delay(1500);
+            }
+        }
+
+        if (!temQuadros) {
             console.log(`${prefix} ⚠️ Quadros ainda não publicados ou página indisponível.`);
             return { status: 'sem_quadros' };
         }
@@ -189,20 +220,24 @@ async function processarTorneio(torneio, browser, prefix) {
         let totalDuplasTorneio = 0;
         let totalJogosTorneio = 0;
 
-        for (const cat of categoriasAlvo) {
+        for (let i = 0; i < categoriasAlvo.length; i++) {
+            const cat = categoriasAlvo[i];
             try {
-                // Selecionar categoria
-                const dropdownExiste = await page.$('select[id$="drop_tournaments"], #drop_tournaments');
-                if (!dropdownExiste) {
-                    await page.goto(urlDraws, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-                    await page.waitForSelector('select[id$="drop_tournaments"], #drop_tournaments', { visible: true, timeout: 6000 }).catch(() => {});
+                // A partir da 2ª categoria (ou se o dropdown desapareceu), voltar aos Draws para ter o dropdown
+                if (i > 0) {
+                    await garantirDropdown(page, urlDraws);
+                } else {
+                    const existe = await page.$('select[id$="drop_tournaments"], #drop_tournaments');
+                    if (!existe) {
+                        await garantirDropdown(page, urlDraws);
+                    }
                 }
 
                 await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {}),
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {}),
                     page.select('select[id$="drop_tournaments"], #drop_tournaments', cat.value)
                 ]);
-                await delay(600);
+                await delay(500);
 
                 // Descobrir Fases / Separadores disponíveis (ex: Principal, Qualificação, Grupos, Poules)
                 const fases = await safeEvaluate(page, () => {
@@ -218,17 +253,19 @@ async function processarTorneio(torneio, browser, prefix) {
                 let todasDuplasCat = [];
                 let todosJogosCat = [];
 
-                for (const fase of listaFases) {
-                    if (fase.id) {
+                for (let fIdx = 0; fIdx < listaFases.length; fIdx++) {
+                    const fase = listaFases[fIdx];
+                    // A primeira fase (index 0) já é carregada ao selecionar a categoria. Clicar apenas a partir da 2ª fase.
+                    if (fIdx > 0 && fase.id) {
                         try {
                             await Promise.all([
-                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {}),
+                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {}),
                                 safeEvaluate(page, (targetId) => {
                                     const el = document.getElementById(targetId);
                                     if (el) el.click();
                                 }, fase.id)
                             ]);
-                            await delay(500);
+                            await delay(400);
                         } catch (navErr) {}
                     }
 
@@ -539,6 +576,16 @@ async function processarTorneio(torneio, browser, prefix) {
     } catch (err) {
         console.error("❌ Erro fatal de ligação:", err.message);
         process.exit(1);
+    }
+
+    // Ignorar torneios da Liga Mudum por defeito
+    if (!FILTER_ID && !args.includes('--incluir-mudum')) {
+        const totalAntes = torneios.length;
+        torneios = torneios.filter(t => !t.nome || !t.nome.toLowerCase().includes('mudum'));
+        const ignorados = totalAntes - torneios.length;
+        if (ignorados > 0) {
+            console.log(`ℹ️ Ignorados ${ignorados} torneios da Liga Mudum (usa --incluir-mudum para incluir).`);
+        }
     }
 
     // Filtrar ativos/recentes se pedido
