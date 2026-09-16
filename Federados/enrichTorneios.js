@@ -388,6 +388,10 @@ async function processarTorneio(torneio, browser, prefix) {
                             return false;
                         };
 
+                        const c1 = document.querySelector('[id*="_lbl_main_champion_1"]')?.innerText.trim() || '';
+                        const c2 = document.querySelector('[id*="_lbl_main_champion_2"]')?.innerText.trim() || '';
+                        const champion = [c1, c2].filter(Boolean).join(' / ');
+
                         const jogosRaw = [];
 
                         document.querySelectorAll('span[id*="_lbl_score_"]').forEach(scoreEl => {
@@ -430,6 +434,15 @@ async function processarTorneio(torneio, browser, prefix) {
                                             equipaB = 'A definir';
                                         }
 
+                                        const scoreSpans = Array.from(scoreEl.querySelectorAll('span.score'));
+                                        const scoreRawText = scoreSpans.length > 0 ? scoreSpans.map(sp => sp.innerText.trim()).join(' ') : scoreEl.innerText.trim();
+                                        let formattedScore = formatarScore(scoreRawText);
+
+                                        // Se for a final (ou contiver o campeão oficial) e o campeão for a Equipa B, inverte os sets
+                                        if (champion && p1b && champion.toLowerCase().includes(p1b.toLowerCase()) && (!p1a || !champion.toLowerCase().includes(p1a.toLowerCase()))) {
+                                            formattedScore = formattedScore.replace(/(\d+)-(\d+)/g, '$2-$1');
+                                        }
+
                                         const rect = parentTd.getBoundingClientRect();
                                         jogosRaw.push({
                                             torneio_id: torneioId,
@@ -437,7 +450,7 @@ async function processarTorneio(torneio, browser, prefix) {
                                             fase: nomeFase,
                                             equipa_a: equipaA,
                                             equipa_b: equipaB,
-                                            resultado: formatarScore(scoreEl.innerText),
+                                            resultado: formattedScore,
                                             data_hora_campo: dataHoraCampo,
                                             x: rect.left,
                                             isTableDraw: !!parentTd.closest('table.new_draw')

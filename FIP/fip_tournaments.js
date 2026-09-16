@@ -200,12 +200,16 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
         if (duplasParaInserir.length > 0) {
             const categoriasArray = Array.from(categoriasDuplas);
 
-            // Limpa apenas as categorias deste evento FIP para evitar duplicados
+            // Limpa apenas as categorias deste evento FIP e eventuais duplicados obsoletos
+            const categoriasParaLimpar = [...categoriasArray];
+            if (categoriasArray.includes('M1')) categoriasParaLimpar.push('Masculinos');
+            if (categoriasArray.includes('F1')) categoriasParaLimpar.push('Femininos');
+
             const { error: delErr } = await supabase
                 .from('torneiosfpp_duplas')
                 .delete()
                 .eq('torneio_id', String(torneioFppId))
-                .in('categoria', categoriasArray);
+                .in('categoria', categoriasParaLimpar);
 
             if (delErr) {
                 console.warn(`   ⚠️ Aviso ao limpar duplas anteriores:`, delErr.message);
@@ -281,13 +285,20 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
             });
 
             if (matchesParaInserir.length > 0) {
-                // Limpar jogos desta categoria/fase específica antes de inserir
+                // Limpar jogos desta categoria/fase específica e obsoletos antes de inserir
                 await supabase
                     .from('torneiosfpp_matches')
                     .delete()
                     .eq('torneio_id', String(torneioFppId))
                     .eq('categoria', mapeamento.categoria)
                     .eq('fase', mapeamento.fase);
+
+                if (mapeamento.categoria === 'M1') {
+                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).eq('categoria', 'Masculinos');
+                }
+                if (mapeamento.categoria === 'F1') {
+                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).eq('categoria', 'Femininos');
+                }
 
                 // Inserção em lotes de 100
                 for (let i = 0; i < matchesParaInserir.length; i += 100) {
