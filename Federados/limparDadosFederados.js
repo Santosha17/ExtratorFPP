@@ -180,6 +180,59 @@ function isSchedule(name) {
         if (matches.length < PAGE_SIZE) break;
     }
 
+    // 3. DESDUPLICAR TORNEIOS COM O MESMO URL_TIEPADEL
+    console.log("\n3️⃣  A verificar e eliminar torneios duplicados (mesmo url_tiepadel)...");
+    try {
+        const resTorneios = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp?url_tiepadel=not.is.null&select=id,fpp_id,nome,url_tiepadel,updated_at`, { headers });
+        if (resTorneios && resTorneios.ok) {
+            const listaTorneios = await resTorneios.json();
+            const urlGroups = new Map();
+
+            for (const t of listaTorneios) {
+                const normUrl = t.url_tiepadel.trim().toLowerCase().replace(/\/+$/, '');
+                if (!urlGroups.has(normUrl)) urlGroups.set(normUrl, []);
+                urlGroups.get(normUrl).push(t);
+            }
+
+            let totalEliminados = 0;
+            for (const [normUrl, grupo] of urlGroups.entries()) {
+                if (grupo.length > 1) {
+                    // Avaliar duplas de cada registo
+                    const avaliados = [];
+                    for (const t of grupo) {
+                        const resDuplas = await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp_duplas?torneio_id=eq.${encodeURIComponent(t.fpp_id)}&select=id`, { headers });
+                        const duplas = (resDuplas && resDuplas.ok) ? await resDuplas.json() : [];
+                        avaliados.push({ ...t, qtdDuplas: duplas.length });
+                    }
+
+                    // Ordena: o melhor fica primeiro (mais duplas; se empate, mais recente)
+                    avaliados.sort((a, b) => {
+                        if (b.qtdDuplas !== a.qtdDuplas) return b.qtdDuplas - a.qtdDuplas;
+                        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+                    });
+
+                    const principal = avaliados[0];
+                    const duplicados = avaliados.slice(1);
+
+                    for (const dup of duplicados) {
+                        // Se o duplicado tem 0 duplas ou menos que o principal, podemos apagar com segurança
+                        if (dup.qtdDuplas === 0 || dup.qtdDuplas <= principal.qtdDuplas) {
+                            console.log(`   🗑️ A eliminar torneio fantasma: [${dup.fpp_id}] "${dup.nome}" (Duplas: ${dup.qtdDuplas}) a favor de [${principal.fpp_id}] (Duplas: ${principal.qtdDuplas})`);
+                            await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp?id=eq.${dup.id}`, {
+                                method: 'DELETE',
+                                headers
+                            });
+                            totalEliminados++;
+                        }
+                    }
+                }
+            }
+            console.log(`   ✅ Higienização concluída: ${totalEliminados} torneios duplicados eliminados.`);
+        }
+    } catch (dedupErr) {
+        console.error("   ❌ Erro ao desduplicar torneios:", dedupErr.message);
+    }
+
     console.log("\n==========================================================");
     console.log(`🏆 Limpeza Concluída!`);
     console.log(`   • Total de jogos analisados: ${totalAnalisados}`);
