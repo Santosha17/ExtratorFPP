@@ -354,6 +354,28 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
         // ignora se falhar
     }
 
+    // 5. Tenta enriquecer com Horários e Campos da Order of Play oficial (PDFs no site da FIP)
+    try {
+        const { spawnSync } = require('child_process');
+        const path = require('path');
+        const oopScript = path.resolve(__dirname, 'fip_order_of_play.py');
+        if (tournamentInfo && tournamentInfo.name) {
+            const nomeNorm = normalizarTexto(tournamentInfo.name).replace(/\s+/g, '-');
+            const slug = `${nomeNorm}-${ano}`;
+            console.log(`\n🕒 A verificar Order of Play no site padelfip.com (${slug})...`);
+            const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+            const proc = spawnSync(pyCmd, [oopScript, String(torneioFppId), slug], {
+                encoding: 'utf-8',
+                timeout: 30000
+            });
+            if (proc.stdout) {
+                console.log(proc.stdout.trim());
+            }
+        }
+    } catch (oopErr) {
+        console.warn(`   ⚠️ Aviso ao verificar Order of Play:`, oopErr.message);
+    }
+
     return { totalJogosInseridos, duplasCategorias: Array.from(categoriasDuplas) };
 }
 
