@@ -186,7 +186,9 @@ function calculateSimilarity(str1, str2) {
 // 4. MOTOR PRINCIPAL
 // -----------------------------------------------------------------------------
 (async () => {
-    const ANO_ALVO = '2026';
+    const args = process.argv.slice(2);
+    const anoArg = args.find(a => a.startsWith('--ano='));
+    const ANO_ALVO = anoArg ? anoArg.split('=')[1] : new Date().getFullYear().toString();
     console.log("==========================================================");
     console.log(`🚀 A iniciar extração do calendário ${ANO_ALVO} via Puppeteer...`);
     console.log("==========================================================");

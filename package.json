@@ -20,7 +20,12 @@
     "scrape:jogadores": "node scraper_jogadores.js",
     "scrape:pontos": "node scraperFppPontos.js",
     "sync:fip": "node FIP/fip_tournaments.js --todos",
-    "sync:fip:mapear": "node FIP/fip_tournaments.js --todos --mapear"
+    "sync:fip:mapear": "node FIP/fip_tournaments.js --todos --mapear",
+    "federados:status": "node Federados/autoDispatcher.js --status",
+    "federados:live": "node Federados/autoDispatcher.js --live",
+    "federados:enrich": "node Federados/autoDispatcher.js --enrich",
+    "federados:sync": "node Federados/autoDispatcher.js --sync",
+    "federados:daemon": "node Federados/autoDispatcher.js --daemon"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
