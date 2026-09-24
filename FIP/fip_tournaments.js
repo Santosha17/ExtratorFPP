@@ -371,6 +371,9 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
             if (proc.stdout) {
                 console.log(proc.stdout.trim());
             }
+            if (proc.stderr && proc.stderr.trim()) {
+                console.warn(`   ⚠️ Detalhe Order of Play:`, proc.stderr.trim());
+            }
         }
     } catch (oopErr) {
         console.warn(`   ⚠️ Aviso ao verificar Order of Play:`, oopErr.message);
