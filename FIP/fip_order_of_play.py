@@ -42,19 +42,44 @@ def obter_credenciais_supabase():
                     sb_key = line.split('=', 1)[1].strip()
     return sb_url, sb_key
 
-def obter_pdf_urls_da_pagina(event_slug):
+def obter_pdf_urls_da_pagina(event_slug, torneio_nome=''):
     url = f"https://www.padelfip.com/events/{event_slug}/"
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    html = ''
     try:
         with urllib.request.urlopen(req) as resp:
             html = resp.read().decode('utf-8', errors='ignore')
     except Exception as e:
-        print(f"⚠️ Erro ao aceder a {url}: {e}")
-        return []
+        # Fallback: se o slug direto falhar, procura o link exato no calendário do ano
+        if torneio_nome:
+            try:
+                ano_match = re.search(r'20\d{2}', event_slug)
+                ano_str = ano_match.group(0) if ano_match else '2026'
+                cal_url = f"https://www.padelfip.com/calendar-cupra-fip-tour/?events-year={ano_str}"
+                cal_req = urllib.request.Request(cal_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(cal_req) as c_resp:
+                    cal_html = c_resp.read().decode('utf-8', errors='ignore')
+
+                # Procura links de eventos que contenham palavras do nome do torneio
+                palavras = [w for w in normalizar_texto(torneio_nome).split() if len(w) >= 4 and w not in ['fipp', 'fip', 'tour', 'open']]
+                links = re.findall(r'href="(https://www\.padelfip\.com/events/[^"/]+/)', cal_html)
+                for l in links:
+                    l_norm = normalizar_texto(l)
+                    if any(p in l_norm for p in palavras):
+                        print(f"   ↳ URL resolvido via calendário: {l}")
+                        fallback_req = urllib.request.Request(l, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(fallback_req) as f_resp:
+                            html = f_resp.read().decode('utf-8', errors='ignore')
+                        break
+            except Exception as fe:
+                pass
+
+        if not html:
+            print(f"⚠️ Erro ao aceder a {url}: {e}")
+            return []
 
     # Extrai links de PDFs de Order of Play
     pdf_matches = re.findall(r'href="([^"]*ORDER-OF-PLAY-[^"]*\.pdf)"', html, re.IGNORECASE)
-    # Deduplica preservando ordem
     seen = set()
     pdf_urls = []
     for u in pdf_matches:
@@ -164,7 +189,7 @@ def extrair_slots_de_pdf(pdf_bytes, data_str):
 
     return slots
 
-def atualizar_horarios_torneio(torneio_fpp_id, event_slug):
+def atualizar_horarios_torneio(torneio_fpp_id, event_slug, torneio_nome=''):
     sb_url, sb_key = obter_credenciais_supabase()
     if not sb_url or not sb_key:
         print("❌ Credenciais do Supabase não encontradas!")
@@ -184,7 +209,7 @@ def atualizar_horarios_torneio(torneio_fpp_id, event_slug):
     print(f"📌 Total de jogos na BD: {len(db_matches)}")
 
     # 2. Obter URLs dos PDFs de Order of Play
-    pdf_urls = obter_pdf_urls_da_pagina(event_slug)
+    pdf_urls = obter_pdf_urls_da_pagina(event_slug, torneio_nome)
     print(f"📄 Encontrados {len(pdf_urls)} PDFs de Order of Play na página oficial.")
 
     all_slots = []
@@ -262,4 +287,5 @@ def atualizar_horarios_torneio(torneio_fpp_id, event_slug):
 if __name__ == '__main__':
     t_id = sys.argv[1] if len(sys.argv) > 1 else '2026-09-25-fip-silver-s-o-jo-o-da-madeira-fpp'
     slug = sys.argv[2] if len(sys.argv) > 2 else 'fip-silver-sao-joao-da-madeira-2026'
-    atualizar_horarios_torneio(t_id, slug)
+    nome = sys.argv[3] if len(sys.argv) > 3 else ''
+    atualizar_horarios_torneio(t_id, slug, nome)

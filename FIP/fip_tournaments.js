@@ -364,7 +364,7 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
             const slug = `${nomeNorm}-${ano}`;
             console.log(`\n🕒 A verificar Order of Play no site padelfip.com (${slug})...`);
             const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-            const proc = spawnSync(pyCmd, [oopScript, String(torneioFppId), slug], {
+            const proc = spawnSync(pyCmd, [oopScript, String(torneioFppId), slug, tournamentInfo.name], {
                 encoding: 'utf-8',
                 timeout: 30000
             });
