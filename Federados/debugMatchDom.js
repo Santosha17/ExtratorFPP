@@ -35,75 +35,36 @@ puppeteer.use(StealthPlugin());
     const resultado = await page.evaluate(() => {
         const info = [];
 
-        // 1. Procurar por Fernando Júlio
-        const spans = Array.from(document.querySelectorAll('span, a, div, td'));
-        const fjEl = spans.find(s => s.innerText && s.innerText.toLowerCase().includes('fernando j'));
-
-        let matchContainer = null;
-        let matchId = null;
-
-        if (fjEl) {
-            info.push({ tipo: 'Elemento Jogador Encontrado', tag: fjEl.tagName, id: fjEl.id, class: fjEl.className, text: fjEl.innerText });
-            // Se o id for do tipo ..._lbl_ply_XXXX_a_1
-            const m = fjEl.id.match(/_lbl_ply_([^_]+)_/);
-            if (m) matchId = m[1];
-            matchContainer = fjEl.closest('td, tr, table, .match, .cell');
-        }
-
-        // 2. Procurar todos os elementos com esse matchId no id
-        let elementosComMatchId = [];
-        if (matchId) {
-            elementosComMatchId = Array.from(document.querySelectorAll(`[id*="${matchId}"]`)).map(el => ({
-                id: el.id,
-                tag: el.tagName,
-                class: el.className,
-                text: el.innerText.trim(),
-                title: el.getAttribute('title'),
-                parentTag: el.parentElement?.tagName,
-                parentClass: el.parentElement?.className
-            }));
-        }
-
-        // 3. Procurar quaisquer elementos que contenham datas, horas (ex: HH:MM ou DD/MM ou \d{1,2}:\d{2}) na página
-        const elementosComHorario = Array.from(document.querySelectorAll('span, a, div, td, b, p'))
+        // Procurar todos os elementos folha que contêm datas/horários (ex: 2026-09-)
+        const scheduleLeafElements = Array.from(document.querySelectorAll('*'))
             .filter(el => {
                 const txt = el.innerText ? el.innerText.trim() : '';
-                return /\b\d{1,2}:\d{2}\b/.test(txt) && txt.length < 50;
+                return /^\d{4}-\d{2}-\d{2},\s*(?:Starting at|Not before)?\s*\d{1,2}:\d{2}/i.test(txt) && el.children.length === 0;
             })
-            .slice(0, 15)
-            .map(el => ({
-                id: el.id,
-                tag: el.tagName,
-                class: el.className,
-                text: el.innerText.trim(),
-                parentTag: el.parentElement?.tagName,
-                parentId: el.parentElement?.id,
-                parentClass: el.parentElement?.className
-            }));
+            .slice(0, 5)
+            .map(el => {
+                const parentTd = el.closest('td');
+                const parentTr = el.closest('tr');
+                const prevTr = parentTr?.previousElementSibling;
+                const nextTr = parentTr?.nextElementSibling;
 
-        // 4. Inspecionar a estrutura do parentTd do score
-        const scoreEl = document.querySelector('span[id*="_lbl_score_"]');
-        let parentTdInfo = null;
-        if (scoreEl) {
-            const td = scoreEl.closest('td');
-            if (td) {
-                parentTdInfo = {
-                    tdId: td.id,
-                    tdClass: td.className,
-                    tdHtml: td.innerHTML.slice(0, 500),
-                    prevTdHtml: td.previousElementSibling?.innerHTML?.slice(0, 300) || null,
-                    parentTrHtml: td.parentElement?.innerHTML?.slice(0, 500) || null
+                return {
+                    tag: el.tagName,
+                    id: el.id,
+                    className: el.className,
+                    text: el.innerText.trim(),
+                    parentTdClass: parentTd?.className,
+                    parentTdId: parentTd?.id,
+                    parentTrId: parentTr?.id,
+                    parentTrIndex: parentTr ? Array.from(parentTr.parentElement?.children || []).indexOf(parentTr) : -1,
+                    // Procurar scores ou jogadores perto desta TR
+                    scorePerto: parentTr?.querySelector('[id*="_lbl_score_"]')?.id || nextTr?.querySelector('[id*="_lbl_score_"]')?.id || prevTr?.querySelector('[id*="_lbl_score_"]')?.id,
+                    scorePertoText: parentTr?.querySelector('[id*="_lbl_score_"]')?.innerText || nextTr?.querySelector('[id*="_lbl_score_"]')?.innerText || prevTr?.querySelector('[id*="_lbl_score_"]')?.innerText,
+                    jogadoresNaMesmaTrOuVizinhas: Array.from(parentTr?.querySelectorAll('[id*="_lbl_ply_"]') || []).map(p => p.innerText.trim())
                 };
-            }
-        }
+            });
 
-        return {
-            matchId,
-            info,
-            elementosComMatchId,
-            elementosComHorario,
-            parentTdInfo
-        };
+        return { scheduleLeafElements };
     });
 
     console.log("\n==================== RESULTADO DA INSPEÇÃO ====================");
