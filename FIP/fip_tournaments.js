@@ -83,10 +83,10 @@ function mapearDrawParaCategoria(drawType, drawName = '') {
     const dt = (drawType || '').toUpperCase();
 
     // Seniores / FIP Tour
-    if (dt === 'MD') return { categoria: 'M1', fase: 'Quadro Principal' };
-    if (dt === 'MQ') return { categoria: 'M1', fase: 'Qualificação' };
-    if (dt === 'WD') return { categoria: 'F1', fase: 'Quadro Principal' };
-    if (dt === 'WQ') return { categoria: 'F1', fase: 'Qualificação' };
+    if (dt === 'MD') return { categoria: 'Masculinos 1', fase: 'Quadro Principal' };
+    if (dt === 'MQ') return { categoria: 'Masculinos 1', fase: 'Qualificação' };
+    if (dt === 'WD') return { categoria: 'Femininos 1', fase: 'Quadro Principal' };
+    if (dt === 'WQ') return { categoria: 'Femininos 1', fase: 'Qualificação' };
 
     // FIP Promises (Sub-12, Sub-14, Sub-16, Sub-18)
     const promisesMap = {
@@ -202,8 +202,8 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
 
             // Limpa apenas as categorias deste evento FIP e eventuais duplicados obsoletos
             const categoriasParaLimpar = [...categoriasArray];
-            if (categoriasArray.includes('M1')) categoriasParaLimpar.push('Masculinos');
-            if (categoriasArray.includes('F1')) categoriasParaLimpar.push('Femininos');
+            if (categoriasArray.includes('Masculinos 1') || categoriasArray.includes('M1')) categoriasParaLimpar.push('Masculinos', 'M1', 'Masculinos 1');
+            if (categoriasArray.includes('Femininos 1') || categoriasArray.includes('F1')) categoriasParaLimpar.push('Femininos', 'F1', 'Femininos 1');
 
             const { error: delErr } = await supabase
                 .from('torneiosfpp_duplas')
@@ -293,11 +293,11 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
                     .eq('categoria', mapeamento.categoria)
                     .eq('fase', mapeamento.fase);
 
-                if (mapeamento.categoria === 'M1') {
-                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).eq('categoria', 'Masculinos');
+                if (mapeamento.categoria === 'Masculinos 1' || mapeamento.categoria === 'M1') {
+                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).in('categoria', ['Masculinos', 'M1', 'Masculinos 1']);
                 }
-                if (mapeamento.categoria === 'F1') {
-                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).eq('categoria', 'Femininos');
+                if (mapeamento.categoria === 'Femininos 1' || mapeamento.categoria === 'F1') {
+                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).in('categoria', ['Femininos', 'F1', 'Femininos 1']);
                 }
 
                 // Inserção em lotes de 100

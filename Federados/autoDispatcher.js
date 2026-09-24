@@ -176,11 +176,11 @@ function obterTorneiosParaEnrich(torneios, todayStr) {
 // -----------------------------------------------------------------------------
 function executarScript(scriptName, scriptArgs = []) {
     return new Promise((resolve, reject) => {
-        const scriptPath = path.resolve(__dirname, scriptName);
-        console.log(`\n▶️ [AutoDispatcher] A lançar: node ${scriptName} ${scriptArgs.join(' ')}`);
+        const scriptPath = path.isAbsolute(scriptName) ? scriptName : path.resolve(__dirname, scriptName);
+        console.log(`\n▶️ [AutoDispatcher] A lançar: node ${path.basename(scriptName)} ${scriptArgs.join(' ')}`);
 
         const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
-            cwd: __dirname,
+            cwd: path.dirname(scriptPath),
             stdio: 'inherit',
             env: process.env
         });
@@ -225,12 +225,27 @@ async function handleLive() {
         console.log(`   • ${t.nome} (${p ? p.formatted : 'Hoje'}) [ID: ${t.fpp_id}]`);
     });
 
-    const extraArgs = process.argv.slice(2).filter(a => a !== '--live');
-    if (!extraArgs.some(a => a.startsWith('--concurrency'))) {
-        extraArgs.push('--concurrency=3');
+    // Se houver torneios FIP ativos hoje, sincronizar via API oficial FIP
+    const temFipHoje = torneiosHoje.some(t => t.nome && t.nome.toUpperCase().includes('FIP'));
+    if (temFipHoje) {
+        try {
+            const fipScript = path.resolve(__dirname, '../FIP/fip_tournaments.js');
+            console.log(`\n🌍 [AutoDispatcher:Live] A atualizar resultados de torneios FIP...`);
+            await executarScript(fipScript, ['--todos']);
+        } catch (fipErr) {
+            console.warn(`⚠️ [AutoDispatcher:Live] Aviso FIP:`, fipErr.message);
+        }
     }
 
-    await executarScript('liveWatcherFederados.js', extraArgs);
+    // Executar Live Watcher para torneios do Tiepadel
+    const temTiepadelHoje = torneiosHoje.some(t => !t.nome || !t.nome.toUpperCase().includes('FIP'));
+    if (temTiepadelHoje) {
+        const extraArgs = process.argv.slice(2).filter(a => a !== '--live');
+        if (!extraArgs.some(a => a.startsWith('--concurrency'))) {
+            extraArgs.push('--concurrency=3');
+        }
+        await executarScript('liveWatcherFederados.js', extraArgs);
+    }
 }
 
 async function handleEnrich() {
@@ -238,16 +253,28 @@ async function handleEnrich() {
     const hora = getPortugalHourMinute();
     console.log(`[${todayStr} ${hora}] 🔍 [AutoDispatcher:Enrich] A verificar se há torneios para consolidar/extrair quadros...`);
 
+    // 1. Sincronizar Torneios Internacionais FIP em Portugal (API FIP - rápido e direto)
+    try {
+        const fipScript = path.resolve(__dirname, '../FIP/fip_tournaments.js');
+        console.log(`\n🌍 [AutoDispatcher:Enrich] A sincronizar Torneios FIP internacionais via API oficial...`);
+        await executarScript(fipScript, ['--todos']);
+    } catch (fipErr) {
+        console.warn(`⚠️ [AutoDispatcher:Enrich] Aviso FIP:`, fipErr.message);
+    }
+
+    // 2. Extrair Torneios Nacionais Federados via Tiepadel / Puppeteer
     const torneios = await obterTorneiosRegistados();
-    const torneiosEnrich = obterTorneiosParaEnrich(torneios, todayStr);
+    // Filtramos torneios FIP do Puppeteer (já sincronizados pela API) para poupar recursos
+    const torneiosNaoFip = torneios.filter(t => !t.nome || !t.nome.toUpperCase().includes('FIP'));
+    const torneiosEnrich = obterTorneiosParaEnrich(torneiosNaoFip, todayStr);
 
     if (torneiosEnrich.length === 0) {
-        console.log(`[${todayStr} ${hora}] ⏸️ Nenhum torneio ativo ou em fase de publicação de quadros para hoje (${todayStr}).`);
-        console.log(`   Enrich ignorado para poupar recursos. Operação concluída.`);
+        console.log(`[${todayStr} ${hora}] ⏸️ Nenhum torneio federado nacional pendente de enriquecimento para hoje (${todayStr}).`);
+        console.log(`   Enrich concluído com sucesso.`);
         process.exit(0);
     }
 
-    console.log(`[${todayStr} ${hora}] 📋 Torneios elegíveis para enriquecimento (${torneiosEnrich.length}):`);
+    console.log(`[${todayStr} ${hora}] 📋 Torneios federados nacionais para enriquecer via Puppeteer (${torneiosEnrich.length}):`);
     torneiosEnrich.forEach(t => {
         const p = parseTournamentDates(t);
         console.log(`   • ${t.nome} (${p ? p.formatted : 'N/D'}) [ID: ${t.fpp_id}]`);
@@ -268,13 +295,21 @@ async function handleSyncGeral() {
     // 1. Baixar PDF oficial e atualizar torneiosfpp
     await executarScript('syncFPP.js');
 
-    // 2. Reconciliar com o calendário Tiepadel (obter url_tiepadel)
+    // 2. Sincronizar e mapear torneios internacionais FIP
+    try {
+        const fipScript = path.resolve(__dirname, '../FIP/fip_tournaments.js');
+        await executarScript(fipScript, ['--todos']);
+    } catch (e) {
+        console.warn("⚠️ Aviso FIP no Sync:", e.message);
+    }
+
+    // 3. Reconciliar com o calendário Tiepadel (obter url_tiepadel)
     await executarScript('updateCalendario.js');
 
-    // 3. Extrair coordenadas GPS, morada detalhada, regulamento e árbitro
+    // 4. Extrair coordenadas GPS, morada detalhada, regulamento e árbitro
     await executarScript('updateCoordenadas.js');
 
-    // 4. Higienizar tabela de torneios (remover Bye e arrumar resultados)
+    // 5. Higienizar tabela de torneios (remover Bye e arrumar resultados)
     await executarScript('limparDadosFederados.js');
 
     console.log(`\n🏁 [AutoDispatcher:Sync] Pipeline Semanal concluído com êxito!`);
