@@ -426,6 +426,23 @@ async function processarTorneioLive(torneio, browser, prefix) {
                         const c2 = document.querySelector('[id*="_lbl_main_champion_2"]')?.innerText.trim() || '';
                         const champion = [c1, c2].filter(Boolean).join(' / ');
 
+                        // Elementos candidatos com datas/horas/campos para matching geométrico em brackets
+                        const candidateDateEls = Array.from(document.querySelectorAll('span.date, span.time, [id*="lbl_date"], span[id*="_lbl_ply_"]'))
+                            .filter(el => {
+                                const txt = el.innerText.trim();
+                                return /^\d{4}-\d{2}-\d{2}/.test(txt) || /^\d{1,2}\/\d{1,2}/.test(txt) || /(?:Starting at|Not before)\s*\d{1,2}:\d{2}/i.test(txt);
+                            })
+                            .map(el => {
+                                const rect = el.getBoundingClientRect();
+                                return {
+                                    text: el.innerText.replace(/\s+/g, ' ').trim(),
+                                    centerX: rect.left + rect.width / 2,
+                                    centerY: rect.top + rect.height / 2,
+                                    rect
+                                };
+                            })
+                            .filter(item => item.rect.width > 0 || item.rect.height > 0);
+
                         const jogosRaw = [];
 
                         document.querySelectorAll('span[id*="_lbl_score_"]').forEach(scoreEl => {
@@ -445,26 +462,44 @@ async function processarTorneioLive(torneio, browser, prefix) {
                                     const parentTd = scoreEl.closest('td');
 
                                     if (parentTd) {
-                                        let dateSpan = parentTd.querySelector('.date, .time, [id*="lbl_date"]');
-                                        if (!dateSpan && parentTd.previousElementSibling) {
-                                            dateSpan = parentTd.previousElementSibling.querySelector('.date, .time, [id*="lbl_date"]');
-                                        }
-                                        if (!dateSpan && parentTd.parentElement) {
-                                            dateSpan = parentTd.parentElement.querySelector('.date, .time, [id*="lbl_date"]');
-                                        }
-                                        if (dateSpan) dataHoraCampo = dateSpan.innerText.trim();
+                                        const isDraw = !!parentTd.closest('table.new_draw');
 
-                                        if (isSchedule(equipaA)) {
-                                            if (!dataHoraCampo && (/^\d{4}-\d{2}-\d{2}/.test(equipaA) || /^\d{1,2}\/\d{1,2}/.test(equipaA))) {
-                                                dataHoraCampo = equipaA;
+                                        // 1. Em brackets eliminatórios (table.new_draw), matching geométrico por proximidade ao bloco do jogo
+                                        if (isDraw && candidateDateEls.length > 0) {
+                                            const sRect = scoreEl.getBoundingClientRect();
+                                            const sX = sRect.left + sRect.width / 2;
+                                            const sY = sRect.top + sRect.height / 2;
+                                            let bestDist = 999999;
+
+                                            for (const d of candidateDateEls) {
+                                                const distX = Math.abs(d.centerX - sX);
+                                                const distY = Math.abs(d.centerY - sY);
+                                                const dist = Math.sqrt(distX * distX + distY * distY);
+                                                if (dist < bestDist && distX < 180 && distY < 180) {
+                                                    bestDist = dist;
+                                                    dataHoraCampo = d.text;
+                                                }
                                             }
+                                        }
+
+                                        // 2. Fallback estrutural no DOM (muito comum em fase de grupos e listagens)
+                                        if (!dataHoraCampo) {
+                                            let dateSpan = parentTd.querySelector('.date, .time, [id*="lbl_date"]');
+                                            if (!dateSpan && parentTd.previousElementSibling) {
+                                                dateSpan = parentTd.previousElementSibling.querySelector('.date, .time, [id*="lbl_date"]');
+                                            }
+                                            if (!dateSpan && parentTd.parentElement) {
+                                                dateSpan = parentTd.parentElement.querySelector('.date, .time, [id*="lbl_date"]');
+                                            }
+                                            if (dateSpan) dataHoraCampo = dateSpan.innerText.replace(/\s+/g, ' ').trim();
+                                        }
+
+                                        // Se uma equipa tem formato de data/hora ou placeholder de ronda anterior, normaliza para 'A definir'
+                                        if (isSchedule(equipaA)) {
                                             equipaA = 'A definir';
                                         }
 
                                         if (isSchedule(equipaB)) {
-                                            if (!dataHoraCampo && (/^\d{4}-\d{2}-\d{2}/.test(equipaB) || /^\d{1,2}\/\d{1,2}/.test(equipaB))) {
-                                                dataHoraCampo = equipaB;
-                                            }
                                             equipaB = 'A definir';
                                         }
 
@@ -487,7 +522,7 @@ async function processarTorneioLive(torneio, browser, prefix) {
                                             resultado: formattedScore,
                                             data_hora_campo: dataHoraCampo,
                                             x: rect.left,
-                                            isTableDraw: !!parentTd.closest('table.new_draw')
+                                            isTableDraw: isDraw
                                         });
                                     }
                                 }
