@@ -64,9 +64,14 @@ function determinarRonda(matchId, roundName, competitionType) {
     const isQuali = matchId.toUpperCase().includes('Q') || matchId.startsWith('J') || matchId.startsWith('K');
 
     if (isQuali) {
-        if (num <= 4) return 'Ronda Final Qualificação';
-        if (num <= 8) return 'Ronda 2 Qualificação';
-        return 'Ronda 1 Qualificação';
+        // Na qualificação KO (ex: quadro de 16 com 4 apurados):
+        // 4 a 7 -> Ronda Final de Acesso à fase seguinte
+        // 8 a 15 -> Ronda 1 (ou Ronda 2 num quadro de 32)
+        // 16 a 31 -> Ronda 1
+        if (num <= 7) return 'Ronda Final Qualificação';
+        if (num <= 15) return 'Ronda 1 Qualificação';
+        if (num <= 31) return 'Ronda 1 Qualificação';
+        return 'Qualificação';
     }
 
     if (num === 1) return 'Final';
@@ -116,16 +121,23 @@ function mapearDrawParaCategoria(drawType, drawName = '') {
     };
 }
 
-function formatarEquipa(team) {
-    if (!team || team.status === 'BYE' || (!team.player && !team.partner)) {
-        return 'BYE';
-    }
+function formatarEquipa(team, isByeMatch = false) {
+    if (!team) return isByeMatch ? 'BYE' : 'A definir';
+    if (team.status === 'BYE') return 'BYE';
 
     const p1 = team.player ? `${team.player.firstName || ''} ${team.player.lastName || ''}`.trim() : '';
     const p2 = team.partner ? `${team.partner.firstName || ''} ${team.partner.lastName || ''}`.trim() : '';
 
     if (p1 && p2) return `${p1} / ${p2}`;
-    return p1 || p2 || 'BYE';
+    if (p1 || p2) return p1 || p2;
+
+    // Vagas de qualificação pendentes (não são BYE, são jogos a realizar)
+    if (team.status === 'Q/LL' || team.status === 'Q' || team.status === 'LL') {
+        return 'Qualificado (Q)';
+    }
+
+    if (isByeMatch) return 'BYE';
+    return team.status || 'A definir';
 }
 
 function normalizarTexto(str) {
@@ -248,6 +260,23 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
         ];
     }
 
+    // Limpar previamente todos os jogos deste evento FIP de uma só vez (sem apagar quadros entre si)
+    const categoriasParaLimparMatches = new Set(['Masculinos 1', 'Masculinos', 'M1', 'Femininos 1', 'Femininos', 'F1']);
+    for (const d of drawsToFetch) {
+        const m = mapearDrawParaCategoria(d.type, d.name);
+        categoriasParaLimparMatches.add(m.categoria);
+    }
+
+    const { error: delMatchesErr } = await supabase
+        .from('torneiosfpp_matches')
+        .delete()
+        .eq('torneio_id', String(torneioFppId))
+        .in('categoria', Array.from(categoriasParaLimparMatches));
+
+    if (delMatchesErr) {
+        console.warn(`   ⚠️ Aviso ao limpar jogos anteriores:`, delMatchesErr.message);
+    }
+
     let categoriasMatches = new Set();
     let totalJogosInseridos = 0;
 
@@ -266,8 +295,9 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
             const compType = draw.competitionType || drawData.competitionFormat || 'KO';
 
             const matchesParaInserir = drawData.matches.map(m => {
-                const equipaA = formatarEquipa(m.team1);
-                const equipaB = formatarEquipa(m.team2);
+                const isBye = !!m.isBye;
+                const equipaA = formatarEquipa(m.team1, isBye);
+                const equipaB = formatarEquipa(m.team2, isBye);
 
                 const rondaTraduzida = determinarRonda(m.matchId, m.roundName, compType);
                 const scoreLimpo = (m.score && m.score.trim().length > 0) ? m.score.trim() : null;
@@ -285,21 +315,6 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
             });
 
             if (matchesParaInserir.length > 0) {
-                // Limpar jogos desta categoria/fase específica e obsoletos antes de inserir
-                await supabase
-                    .from('torneiosfpp_matches')
-                    .delete()
-                    .eq('torneio_id', String(torneioFppId))
-                    .eq('categoria', mapeamento.categoria)
-                    .eq('fase', mapeamento.fase);
-
-                if (mapeamento.categoria === 'Masculinos 1' || mapeamento.categoria === 'M1') {
-                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).in('categoria', ['Masculinos', 'M1', 'Masculinos 1']);
-                }
-                if (mapeamento.categoria === 'Femininos 1' || mapeamento.categoria === 'F1') {
-                    await supabase.from('torneiosfpp_matches').delete().eq('torneio_id', String(torneioFppId)).in('categoria', ['Femininos', 'F1', 'Femininos 1']);
-                }
-
                 // Inserção em lotes de 100
                 for (let i = 0; i < matchesParaInserir.length; i += 100) {
                     const chunk = matchesParaInserir.slice(i, i + 100);
@@ -319,11 +334,21 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
 
     console.log(`\n🎉 Concluído para [${torneioFppId}]: Total de ${totalJogosInseridos} jogos processados.`);
 
-    // 4. Atualiza o fip_event_code no registo do torneio se ainda não estiver preenchido
+    // 4. Atualiza o fip_event_code e datas no registo do torneio
     try {
+        const updatePayload = { fip_event_code: fipEventCode };
+        if (tournamentInfo && tournamentInfo.startDate) {
+            const dFip = new Date(tournamentInfo.startDate);
+            if (!isNaN(dFip.getTime())) {
+                const yyyy = dFip.getFullYear();
+                const mm = String(dFip.getMonth() + 1).padStart(2, '0');
+                const dd = String(dFip.getDate()).padStart(2, '0');
+                updatePayload.data_inicio = `${yyyy}-${mm}-${dd}`;
+            }
+        }
         await supabase
             .from('torneiosfpp')
-            .update({ fip_event_code: fipEventCode })
+            .update(updatePayload)
             .eq('fpp_id', String(torneioFppId));
     } catch (e) {
         // ignora se falhar
@@ -359,6 +384,16 @@ function calcularScoreCorrespondencia(fip, db) {
     const fipIsPromises = fipNome.includes('promises');
     const dbIsPromises = dbNome.includes('promises');
     if (fipIsPromises !== dbIsPromises) return -100;
+
+    // Distinção expressa: São João da Madeira vs Ilha da Madeira
+    const fipIsSJM = fipNome.includes('sao joao') || fipCidade.includes('sao joao');
+    const dbIsSJM = dbNome.includes('sao joao');
+    if (fipIsSJM !== dbIsSJM) {
+        return -100; // Impede que um torneio de São João da Madeira seja associado à Madeira e vice-versa
+    }
+    if (fipIsSJM && dbIsSJM) {
+        score += 50;
+    }
 
     // Escalão de categoria
     const tiers = ['platinum', 'gold', 'silver', 'bronze', 'promises'];
