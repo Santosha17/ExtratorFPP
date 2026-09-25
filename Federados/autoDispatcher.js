@@ -293,16 +293,16 @@ async function handleSyncGeral() {
     // 1. Baixar PDF oficial e atualizar torneiosfpp
     await executarScript('syncFPP.js');
 
-    // 2. Sincronizar e mapear torneios internacionais FIP
+    // 2. Reconciliar com o calendário Tiepadel (obter url_tiepadel)
+    await executarScript('updateCalendario.js');
+
+    // 3. Sincronizar e mapear torneios internacionais FIP (com url_tiepadel já disponível)
     try {
         const fipScript = path.resolve(__dirname, '../FIP/fip_tournaments.js');
         await executarScript(fipScript, ['--todos']);
     } catch (e) {
         console.warn("⚠️ Aviso FIP no Sync:", e.message);
     }
-
-    // 3. Reconciliar com o calendário Tiepadel (obter url_tiepadel)
-    await executarScript('updateCalendario.js');
 
     // 4. Extrair coordenadas GPS, morada detalhada, regulamento e árbitro
     await executarScript('updateCoordenadas.js');
