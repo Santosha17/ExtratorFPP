@@ -326,7 +326,7 @@ function calculateSimilarity(str1, str2) {
         console.log("\n📥 A obter torneios registados do Supabase para reconciliação inteligente...");
         let dbTournaments = [];
         try {
-            const resDb = await fetch(`${SUPABASE_URL}/rest/v1/torneiosfpp?select=id,fpp_id,nome,data_inicio,data_fim,url_tiepadel`, { headers: headersSupabase });
+            const resDb = await fetch(`${SUPABASE_URL}/rest/v1/torneiosfpp?select=id,fpp_id,nome,clube_nome,data_inicio,data_fim,url_tiepadel,categorias`, { headers: headersSupabase });
             if (resDb.ok) dbTournaments = await resDb.json();
         } catch (e) {
             console.error("⚠️ Falha ao obter base de dados. Vai avançar sem reconciliação.");
@@ -372,7 +372,36 @@ function calculateSimilarity(str1, str2) {
                         }
                     }
 
-                    const score = calculateSimilarity(dbT.nome, t.nome);
+                    let score = calculateSimilarity(dbT.nome, t.nome);
+
+                    // Heurística de correspondência FIP + Open Nacional (Mesmo Clube + Datas coincidentes):
+                    // Ex: "FIP Bronze Almeirim FPP" (PDF) <-> "4º Open AlmeirINN Padel" (Tiepadel)
+                    // Ex: "FIP Silver Guimarães FPP" (PDF) <-> "Open McDonald'S" (Tiepadel)
+                    // Ex: "FIP Silver São João da Madeira" (PDF) <-> "Open São João da Madeira" (Tiepadel)
+                    const isFipDb = (dbT.nome || '').toLowerCase().includes('fip') || (dbT.fpp_id || '').toLowerCase().includes('fip');
+                    const isFipT = (t.nome || '').toLowerCase().includes('fip');
+
+                    if ((isFipDb || isFipT) && dbT.clube_nome && t.clube_nome) {
+                        const clubA = normalizeTournamentName(dbT.clube_nome);
+                        const clubB = normalizeTournamentName(t.clube_nome);
+                        if (clubA && clubB && (clubA.includes(clubB) || clubB.includes(clubA))) {
+                            let datasCoincidem = false;
+                            if (dbT.data_fim && t.data_fim) {
+                                const diffFim = Math.abs((new Date(dbT.data_fim) - new Date(t.data_fim)) / (1000 * 60 * 60 * 24));
+                                if (diffFim <= 3) datasCoincidem = true;
+                            } else if (dbT.data_inicio && t.data_inicio) {
+                                const diffInicio = Math.abs((new Date(dbT.data_inicio) - new Date(t.data_inicio)) / (1000 * 60 * 60 * 24));
+                                if (diffInicio <= 4) datasCoincidem = true;
+                            } else if (dbMes && parsedDates.mesInicio && dbMes === parsedDates.mesInicio) {
+                                datasCoincidem = true;
+                            }
+
+                            if (datasCoincidem) {
+                                score = Math.max(score, 0.95);
+                            }
+                        }
+                    }
+
                     if (score > melhorScore && score >= 0.55) {
                         melhorScore = score;
                         melhorMatch = dbT;
@@ -384,9 +413,17 @@ function calculateSimilarity(str1, str2) {
             if (melhorMatch && melhorScore >= 0.55) {
                 // Casamento efetuado com sucesso!
                 t.fpp_id = melhorMatch.fpp_id; // Atualiza o registo original do PDF
-                t.nome = melhorMatch.nome;     // Preserva o nome oficial do PDF
+                t.nome = melhorMatch.nome;     // Preserva o nome oficial do PDF/FIP
                 if (melhorMatch.data_inicio) t.data_inicio = melhorMatch.data_inicio;
                 if (melhorMatch.data_fim) t.data_fim = melhorMatch.data_fim;
+
+                // Combinar categorias para manter M1/F1 e escalões nacionais
+                if (melhorMatch.categorias && t.categorias) {
+                    const setCats = new Set([...melhorMatch.categorias.split(',').map(c => c.trim()), ...t.categorias.split(',').map(c => c.trim())].filter(Boolean));
+                    t.categorias = Array.from(setCats).join(', ');
+                } else if (melhorMatch.categorias && !t.categorias) {
+                    t.categorias = melhorMatch.categorias;
+                }
 
                 reconciliacoesCount++;
                 dbTournaments.splice(melhorIndex, 1); // Remove da pool para casamento 1-para-1
