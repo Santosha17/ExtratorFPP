@@ -375,11 +375,33 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
                 console.warn(`   ⚠️ Detalhe Order of Play:`, proc.stderr.trim());
             }
         }
-    } catch (oopErr) {
-        console.warn(`   ⚠️ Aviso ao verificar Order of Play:`, oopErr.message);
+    // 6. Extrair e fundir as outras categorias da FPP (M2..M6, F2..F6) via Tiepadel
+    let fppCategoriasRes = null;
+    try {
+        const { data: dbTorneio } = await supabase
+            .from('torneiosfpp')
+            .select('id, fpp_id, nome, url_tiepadel, data_inicio, data_fim, data_corrida, ano, fip_event_code')
+            .eq('fpp_id', String(torneioFppId))
+            .maybeSingle();
+
+        if (dbTorneio && dbTorneio.url_tiepadel) {
+            console.log(`\n🇵🇹 [3/3] A extrair categorias complementares da FPP via Tiepadel (${dbTorneio.url_tiepadel})...`);
+            try {
+                const { processarTorneioFppCategorias } = require('../Federados/enrichTorneios');
+                if (processarTorneioFppCategorias) {
+                    fppCategoriasRes = await processarTorneioFppCategorias(dbTorneio);
+                }
+            } catch (errRequire) {
+                console.warn(`   ⚠️ Aviso ao carregar extrator FPP:`, errRequire.message);
+            }
+        } else {
+            console.log(`\nℹ️ [3/3] Torneio [${torneioFppId}] sem url_tiepadel registado. Apenas categorias FIP extraídas.`);
+        }
+    } catch (fppErr) {
+        console.warn(`   ⚠️ Aviso ao tentar enriquecer com categorias FPP:`, fppErr.message);
     }
 
-    return { totalJogosInseridos, duplasCategorias: Array.from(categoriasDuplas) };
+    return { totalJogosInseridos, duplasCategorias: Array.from(categoriasDuplas), fppCategoriasRes };
 }
 
 // -----------------------------------------------------------------------------
@@ -453,6 +475,10 @@ function calcularScoreCorrespondencia(fip, db) {
         else if (diffDias <= 30) score += 10;
     }
 
+    // Preferência a registos que já tenham url_tiepadel e nome com 'fip'
+    if (db.url_tiepadel) score += 15;
+    if (dbNome.includes('fip')) score += 15;
+
     return score;
 }
 
@@ -473,7 +499,7 @@ async function sincronizarTodosTorneiosFip(ano = 2026, apenasMapear = false) {
 
     const { data: dbTorneios, error: dbErr } = await supabase
         .from('torneiosfpp')
-        .select('id, fpp_id, nome, fip_event_code, data_inicio, data_fim');
+        .select('id, fpp_id, nome, fip_event_code, data_inicio, data_fim, url_tiepadel');
 
     if (dbErr) {
         console.error(`❌ Erro ao ler tabela torneiosfpp:`, dbErr.message);

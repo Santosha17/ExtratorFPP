@@ -262,11 +262,9 @@ async function handleEnrich() {
         console.warn(`⚠️ [AutoDispatcher:Enrich] Aviso FIP:`, fipErr.message);
     }
 
-    // 2. Extrair Torneios Nacionais Federados via Tiepadel / Puppeteer
+    // 2. Extrair Torneios Nacionais Federados via Tiepadel / Puppeteer (incluindo categorias complementares de torneios FIP)
     const torneios = await obterTorneiosRegistados();
-    // Filtramos torneios FIP do Puppeteer (já sincronizados pela API) para poupar recursos
-    const torneiosNaoFip = torneios.filter(t => !t.nome || !t.nome.toUpperCase().includes('FIP'));
-    const torneiosEnrich = obterTorneiosParaEnrich(torneiosNaoFip, todayStr);
+    const torneiosEnrich = obterTorneiosParaEnrich(torneios, todayStr);
 
     if (torneiosEnrich.length === 0) {
         console.log(`[${todayStr} ${hora}] ⏸️ Nenhum torneio federado nacional pendente de enriquecimento para hoje (${todayStr}).`);

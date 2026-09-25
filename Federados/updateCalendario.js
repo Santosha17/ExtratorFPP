@@ -152,6 +152,20 @@ function calculateSimilarity(str1, str2) {
     if (!norm1 || !norm2) return 0;
     if (norm1 === norm2) return 1.0;
 
+    // Correspondência inteligente para torneios FIP (ex: "FIP Promises Pinhal Novo" vs "FIP Promises M & F 10.000...")
+    if (norm1.includes('fip') && norm2.includes('fip')) {
+        const tiers = ['promises', 'platinum', 'gold', 'silver', 'bronze', 'promotion'];
+        const tier1 = tiers.find(t => norm1.includes(t));
+        const tier2 = tiers.find(t => norm2.includes(t));
+        if (tier1 && tier2 && tier1 === tier2) {
+            const wordsA = norm1.split(/\s+/).filter(w => w.length >= 4 && !genericStopWords.has(w) && !tiers.includes(w));
+            const wordsB = norm2.split(/\s+/).filter(w => w.length >= 4 && !genericStopWords.has(w) && !tiers.includes(w));
+            if (wordsA.some(w => wordsB.includes(w))) {
+                return 0.95;
+            }
+        }
+    }
+
     // Se uma string contém a outra na íntegra
     if (norm1.includes(norm2) || norm2.includes(norm1)) {
         const shorter = Math.min(norm1.length, norm2.length);

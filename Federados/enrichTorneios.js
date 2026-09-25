@@ -53,19 +53,28 @@ async function fetchWithRetry(url, options = {}, retries = 5, initialDelay = 100
     }
 }
 
-async function limparDadosAntigos(torneio_id, prefix = "") {
+async function limparDadosAntigos(torneio_id, prefix = "", isFip = false) {
     try {
         const headers = {
             'apikey': SUPABASE_KEY,
             'Authorization': `Bearer ${SUPABASE_KEY}`
         };
 
-        await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp_duplas?torneio_id=eq.${encodeURIComponent(torneio_id)}`, {
+        let urlDuplas = `${SUPABASE_URL}/rest/v1/torneiosfpp_duplas?torneio_id=eq.${encodeURIComponent(torneio_id)}`;
+        let urlMatches = `${SUPABASE_URL}/rest/v1/torneiosfpp_matches?torneio_id=eq.${encodeURIComponent(torneio_id)}`;
+
+        if (isFip) {
+            // Preservar categorias M1 e F1 da FIP
+            urlDuplas += `&categoria=not.in.(Masculinos 1,Femininos 1,M1,F1)`;
+            urlMatches += `&categoria=not.in.(Masculinos 1,Femininos 1,M1,F1)`;
+        }
+
+        await fetchWithRetry(urlDuplas, {
             method: 'DELETE',
             headers
         });
 
-        await fetchWithRetry(`${SUPABASE_URL}/rest/v1/torneiosfpp_matches?torneio_id=eq.${encodeURIComponent(torneio_id)}`, {
+        await fetchWithRetry(urlMatches, {
             method: 'DELETE',
             headers
         });
@@ -207,15 +216,33 @@ async function processarTorneio(torneio, browser, prefix) {
             return { status: 'sem_quadros' };
         }
 
+        const isFip = (torneio.fip_event_code && String(torneio.fip_event_code).trim().length > 0) ||
+                      (torneio.nome && torneio.nome.toUpperCase().includes('FIP')) ||
+                      (torneio.fpp_id && String(torneio.fpp_id).toLowerCase().includes('fip'));
+
         let categoriasAlvo = categorias;
+        if (isFip) {
+            // Se for torneio FIP, M1 e F1 são sincronizados diretamente pela API oficial da FIP (fip_tournaments.js)
+            // Aqui filtramos para extrair apenas as outras categorias nacionais (M2..M6, F2..F6, etc.)
+            const categoriasFipOriginais = ['m1', 'f1', 'masculinos 1', 'femininos 1', 'fip m', 'fip f', 'fip m&f', 'fip'];
+            const antesCount = categoriasAlvo.length;
+            categoriasAlvo = categoriasAlvo.filter(c => {
+                const s = c.sigla.toLowerCase().trim();
+                return !categoriasFipOriginais.includes(s) && !s.startsWith('fip ');
+            });
+            if (categoriasAlvo.length < antesCount) {
+                console.log(`${prefix} ℹ️ Torneio FIP detetado: Categorias FIP (M1/F1) preservadas. A extrair categorias complementares da FPP (${categoriasAlvo.map(c => c.sigla).join(', ')}).`);
+            }
+        }
+
         if (FILTER_CATEGORIA) {
             categoriasAlvo = categoriasAlvo.filter(c => c.sigla.toLowerCase().includes(FILTER_CATEGORIA.toLowerCase()));
         }
 
         console.log(`${prefix} 🎾 Categorias encontradas (${categoriasAlvo.length}): ${categoriasAlvo.map(c => c.sigla).join(', ')}`);
 
-        // Limpar dados anteriores do torneio apenas após confirmar que há quadros
-        await limparDadosAntigos(torneio.fpp_id, prefix);
+        // Limpar dados anteriores do torneio apenas após confirmar que há quadros (preservando M1/F1 se for FIP)
+        await limparDadosAntigos(torneio.fpp_id, prefix, isFip);
 
         let totalDuplasTorneio = 0;
         let totalJogosTorneio = 0;
@@ -587,9 +614,36 @@ async function processarTorneio(torneio, browser, prefix) {
     }
 }
 
+async function processarTorneioFppCategorias(torneio, browserInstance = null) {
+    let ownBrowser = false;
+    let browser = browserInstance;
+    if (!browser) {
+        ownBrowser = true;
+        browser = await puppeteer.launch({
+            headless: "new",
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+        });
+    }
+
+    try {
+        const prefix = `[FPP Complementar] [${torneio.nome}]`;
+        return await processarTorneio(torneio, browser, prefix);
+    } finally {
+        if (ownBrowser && browser) {
+            await browser.close().catch(() => {});
+        }
+    }
+}
+
+module.exports = {
+    processarTorneio,
+    processarTorneioFppCategorias
+};
+
 // -----------------------------------------------------------------------------
 // MOTOR PRINCIPAL CONCORRENTE
 // -----------------------------------------------------------------------------
+if (require.main === module) {
 (async () => {
     console.log("==========================================================");
     console.log("🚀 A iniciar Extração Concorrente de Torneios Federados...");
@@ -715,3 +769,4 @@ async function processarTorneio(torneio, browser, prefix) {
     console.log("🏁 Processo concluído com sucesso!");
     process.exit(0);
 })();
+}

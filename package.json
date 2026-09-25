@@ -21,6 +21,7 @@
     "scrape:pontos": "node scraperFppPontos.js",
     "sync:fip": "node FIP/fip_tournaments.js --todos",
     "sync:fip:mapear": "node FIP/fip_tournaments.js --todos --mapear",
+    "clean:fip:duplicados": "node FIP/unificar_torneios_fip.js",
     "federados:status": "node Federados/autoDispatcher.js --status",
     "federados:live": "node Federados/autoDispatcher.js --live",
     "federados:enrich": "node Federados/autoDispatcher.js --enrich",
