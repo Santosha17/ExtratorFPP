@@ -399,14 +399,15 @@ async function handleDaemon() {
                 await handleEnrich();
             }
 
-            // 4. Enrich Noturno (23:35): Apenas se houver torneios
-            if (hora === 23 && minuto >= 35 && minuto < 50 && ultimoEnrichNoite !== todayStr) {
+            // 4. Enrich Noturno (01:00): Apenas se houver torneios
+            if (hora === 1 && minuto < 15 && ultimoEnrichNoite !== todayStr) {
                 ultimoEnrichNoite = todayStr;
                 await handleEnrich();
             }
 
-            // 5. Live Watcher: Das 09h às 23h (a cada 10 minutos)
-            if (hora >= 9 && hora <= 23 && (minuto % 10 === 3)) {
+            // 5. Live Watcher: Das 09:00 às 00:50 (a cada 10 minutos: minuto 3, 13, 23, 33, 43, 53)
+            const isHoraLive = (hora >= 9 && hora <= 23) || (hora === 0 && minuto <= 50);
+            if (isHoraLive && (minuto % 10 === 3)) {
                 await handleLive();
             }
 
