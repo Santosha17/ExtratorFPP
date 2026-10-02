@@ -109,10 +109,8 @@ function isSchedule(name) {
     let totalAnalisados = 0;
 
     while (true) {
-        const queryUrl = `${SUPABASE_URL}/rest/v1/torneiosfpp_matches?select=id,resultado,equipa_a,equipa_b,data_hora_campo&order=id.asc&range=${offset}-${offset + PAGE_SIZE - 1}`;
-        const res = await fetchWithRetry(queryUrl, {
-            headers: { ...headers, 'Range': `${offset}-${offset + PAGE_SIZE - 1}` }
-        });
+        const queryUrl = `${SUPABASE_URL}/rest/v1/torneiosfpp_matches?select=id,resultado,equipa_a,equipa_b,data_hora_campo&order=id.asc&limit=${PAGE_SIZE}&offset=${offset}`;
+        const res = await fetchWithRetry(queryUrl, { headers });
 
         if (!res || !res.ok) {
             console.log("   🏁 Fim da leitura de jogos.");
@@ -161,6 +159,16 @@ function isSchedule(name) {
             if (dhc !== (m.data_hora_campo || '')) {
                 patchPayload.data_hora_campo = dhc;
                 needsUpdate = true;
+            }
+
+            // C. Se o jogo já terminou (tem resultado registado), NUNCA pode ter horários pendentes de rondas futuras
+            const resAtual = patchPayload.resultado || m.resultado;
+            if (resAtual && resAtual !== 'Pendente' && resAtual.trim() !== '') {
+                const dhcAtual = patchPayload.data_hora_campo !== undefined ? patchPayload.data_hora_campo : (m.data_hora_campo || '');
+                if (/(?:Starting at|Not before|A seguir)/i.test(dhcAtual)) {
+                    patchPayload.data_hora_campo = '';
+                    needsUpdate = true;
+                }
             }
 
             if (needsUpdate) {

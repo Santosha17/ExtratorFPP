@@ -426,8 +426,9 @@ async function processarTorneioLive(torneio, browser, prefix) {
                         const c2 = document.querySelector('[id*="_lbl_main_champion_2"]')?.innerText.trim() || '';
                         const champion = [c1, c2].filter(Boolean).join(' / ');
 
-                        // Elementos candidatos com datas/horas/campos para matching geométrico em brackets
-                        const candidateDateEls = Array.from(document.querySelectorAll('span.date, span.time, [id*="lbl_date"], span[id*="_lbl_ply_"]'))
+                        // Elementos candidatos com datas/horas/campos para matching em brackets
+                        // NOTA: Nunca incluir span[id*="_lbl_ply_"] aqui porque são placeholders de rondas seguintes!
+                        const candidateDateEls = Array.from(document.querySelectorAll('span.date:not([id*="_lbl_ply_"]), span.time, [id*="lbl_date"]'))
                             .filter(el => {
                                 const txt = el.innerText.trim();
                                 return /^\d{4}-\d{2}-\d{2}/.test(txt) || /^\d{1,2}\/\d{1,2}/.test(txt) || /(?:Starting at|Not before)\s*\d{1,2}:\d{2}/i.test(txt);
@@ -449,13 +450,13 @@ async function processarTorneioLive(torneio, browser, prefix) {
                             const idParts = scoreEl.id.split('_lbl_score_');
                             if (idParts.length === 2) {
                                 const pfx = idParts[0], matchId = idParts[1];
-                                const p1a = document.getElementById(`${pfx}_lbl_ply_${matchId}_a_1`)?.innerText.trim();
-                                const p2a = document.getElementById(`${pfx}_lbl_ply_${matchId}_a_2`)?.innerText.trim();
-                                const p1b = document.getElementById(`${pfx}_lbl_ply_${matchId}_b_1`)?.innerText.trim();
-                                const p2b = document.getElementById(`${pfx}_lbl_ply_${matchId}_b_2`)?.innerText.trim();
+                                const p1aRaw = document.getElementById(`${pfx}_lbl_ply_${matchId}_a_1`)?.innerText.trim();
+                                const p2aRaw = document.getElementById(`${pfx}_lbl_ply_${matchId}_a_2`)?.innerText.trim();
+                                const p1bRaw = document.getElementById(`${pfx}_lbl_ply_${matchId}_b_1`)?.innerText.trim();
+                                const p2bRaw = document.getElementById(`${pfx}_lbl_ply_${matchId}_b_2`)?.innerText.trim();
 
-                                let equipaA = [p1a, p2a].filter(Boolean).join(' / ');
-                                let equipaB = [p1b, p2b].filter(Boolean).join(' / ');
+                                let equipaA = [p1aRaw, p2aRaw].filter(Boolean).join(' / ');
+                                let equipaB = [p1bRaw, p2bRaw].filter(Boolean).join(' / ');
 
                                 if (equipaA && equipaB && !equipaA.toLowerCase().includes('bye') && !equipaB.toLowerCase().includes('bye')) {
                                     let dataHoraCampo = '';
@@ -464,8 +465,26 @@ async function processarTorneioLive(torneio, browser, prefix) {
                                     if (parentTd) {
                                         const isDraw = !!parentTd.closest('table.new_draw');
 
-                                        // 1. Em brackets eliminatórios (table.new_draw), matching geométrico por proximidade ao bloco do jogo
-                                        if (isDraw && candidateDateEls.length > 0) {
+                                        // 1. Verificar se o próprio jogo tem placeholder de data/hora nos seus próprios slots de jogadores
+                                        const ownDatePlaceholder = [p1aRaw, p2aRaw, p1bRaw, p2bRaw].find(txt => txt && (/^\d{4}-\d{2}-\d{2}/.test(txt) || /^\d{1,2}\/\d{1,2}/.test(txt) || /(?:Starting at|Not before)\s*\d{1,2}:\d{2}/i.test(txt)));
+                                        if (ownDatePlaceholder) {
+                                            dataHoraCampo = ownDatePlaceholder.replace(/\s+/g, ' ').trim();
+                                        }
+
+                                        // 2. Fallback estrutural no DOM no mesmo parentTd ou células adjacentes diretas
+                                        if (!dataHoraCampo) {
+                                            let dateSpan = parentTd.querySelector('.date:not([id*="_lbl_ply_"]), .time, [id*="lbl_date"]');
+                                            if (!dateSpan && parentTd.previousElementSibling) {
+                                                dateSpan = parentTd.previousElementSibling.querySelector('.date:not([id*="_lbl_ply_"]), .time, [id*="lbl_date"]');
+                                            }
+                                            if (!dateSpan && parentTd.parentElement) {
+                                                dateSpan = parentTd.parentElement.querySelector('.date:not([id*="_lbl_ply_"]), .time, [id*="lbl_date"]');
+                                            }
+                                            if (dateSpan) dataHoraCampo = dateSpan.innerText.replace(/\s+/g, ' ').trim();
+                                        }
+
+                                        // 3. Fallback geométrico restrito estritamente à mesma coluna/célula (distX < 40 e distY < 60)
+                                        if (!dataHoraCampo && isDraw && candidateDateEls.length > 0) {
                                             const sRect = scoreEl.getBoundingClientRect();
                                             const sX = sRect.left + sRect.width / 2;
                                             const sY = sRect.top + sRect.height / 2;
@@ -475,23 +494,11 @@ async function processarTorneioLive(torneio, browser, prefix) {
                                                 const distX = Math.abs(d.centerX - sX);
                                                 const distY = Math.abs(d.centerY - sY);
                                                 const dist = Math.sqrt(distX * distX + distY * distY);
-                                                if (dist < bestDist && distX < 180 && distY < 180) {
+                                                if (dist < bestDist && distX < 40 && distY < 60) {
                                                     bestDist = dist;
                                                     dataHoraCampo = d.text;
                                                 }
                                             }
-                                        }
-
-                                        // 2. Fallback estrutural no DOM (muito comum em fase de grupos e listagens)
-                                        if (!dataHoraCampo) {
-                                            let dateSpan = parentTd.querySelector('.date, .time, [id*="lbl_date"]');
-                                            if (!dateSpan && parentTd.previousElementSibling) {
-                                                dateSpan = parentTd.previousElementSibling.querySelector('.date, .time, [id*="lbl_date"]');
-                                            }
-                                            if (!dateSpan && parentTd.parentElement) {
-                                                dateSpan = parentTd.parentElement.querySelector('.date, .time, [id*="lbl_date"]');
-                                            }
-                                            if (dateSpan) dataHoraCampo = dateSpan.innerText.replace(/\s+/g, ' ').trim();
                                         }
 
                                         // Se uma equipa tem formato de data/hora ou placeholder de ronda anterior, normaliza para 'A definir'
@@ -507,8 +514,15 @@ async function processarTorneioLive(torneio, browser, prefix) {
                                         const scoreRawText = scoreSpans.length > 0 ? scoreSpans.map(sp => sp.innerText.trim()).join(' ') : scoreEl.innerText.trim();
                                         let formattedScore = formatarScore(scoreRawText);
 
+                                        // Se o jogo já tem resultado concluído, NUNCA pode manter um horário pendente de jogos futuros
+                                        if (formattedScore !== 'Pendente' && formattedScore !== '') {
+                                            if (/(?:Starting at|Not before|A seguir)/i.test(dataHoraCampo)) {
+                                                dataHoraCampo = '';
+                                            }
+                                        }
+
                                         // Se for a final (ou contiver o campeão oficial) e o campeão for a Equipa B, inverte os sets
-                                        if (champion && p1b && champion.toLowerCase().includes(p1b.toLowerCase()) && (!p1a || !champion.toLowerCase().includes(p1a.toLowerCase()))) {
+                                        if (champion && p1bRaw && champion.toLowerCase().includes(p1bRaw.toLowerCase()) && (!p1aRaw || !champion.toLowerCase().includes(p1aRaw.toLowerCase()))) {
                                             formattedScore = formattedScore.replace(/(\d+)-(\d+)/g, '$2-$1');
                                         }
 

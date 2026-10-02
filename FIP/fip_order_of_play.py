@@ -155,21 +155,20 @@ def extrair_slots_de_pdf(pdf_bytes, data_str):
                 if 'vs' in block.lower():
                     raw_matches.append({'block': block, 'category': category})
 
-            match_idx = 0
-            for c in court_schedule:
-                for t in c['times']:
-                    if match_idx < len(raw_matches):
-                        rm = raw_matches[match_idx]
-                        slots.append({
-                            'court': c['court'],
-                            'time': t,
-                            'date': data_str,
-                            'raw_text': rm['block'],
-                            'norm_text': normalizar_texto(rm['block'])
-                        })
-                        match_idx += 1
-
-            if slots:
+            if raw_matches and court_schedule:
+                num_courts = len(court_schedule)
+                for i, rm in enumerate(raw_matches):
+                    court_idx = i % num_courts
+                    row = i // num_courts
+                    court_obj = court_schedule[court_idx]
+                    t = court_obj['times'][row] if row < len(court_obj['times']) else 'A seguir'
+                    slots.append({
+                        'court': court_obj['court'],
+                        'time': t,
+                        'date': data_str,
+                        'raw_text': rm['block'],
+                        'norm_text': normalizar_texto(rm['block'])
+                    })
                 return slots
 
     # 2. Layout de Qualificação (Qualifying Q1 / Q2 por colunas de campos)
