@@ -375,6 +375,10 @@ async function sincronizarFIPParaTabelasFPP(torneioFppId, fipEventCode, ano = 20
                 console.warn(`   ⚠️ Detalhe Order of Play:`, proc.stderr.trim());
             }
         }
+    } catch (oopErr) {
+        console.warn(`   ⚠️ Aviso ao processar Order of Play:`, oopErr.message);
+    }
+
     // 6. Extrair e fundir as outras categorias da FPP (M2..M6, F2..F6) via Tiepadel
     let fppCategoriasRes = null;
     try {
