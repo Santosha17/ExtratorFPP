@@ -109,11 +109,74 @@ def extrair_slots_de_pdf(pdf_bytes, data_str):
 
     slots = []
 
-    # 1. Layout de Qualificação (Qualifying Q1 / Q2 por colunas de campos)
+    # 1. Layout Tabular / Grelha com Cartões (ex: FIP Promises Caldas, FIP Tour padrão)
+    # Cabeçalho contém colunas com CAMPO X / COURT X e os horários de cada ronda (Starting at / Followed by)
+    # Abaixo vêm os blocos de cada jogo (com equipas, 'vs' e categoria)
+    header_grid_match = re.search(r'((?:CAMPO|COURT)\s+\d+[\s\S]+?)(?:ANY MATCH|Tournament Director|Released|Main Referee)', full_text, re.IGNORECASE)
+    if header_grid_match:
+        grid_text = header_grid_match.group(1)
+        court_chunks = re.split(r'(?=(?:CAMPO|COURT)\s+\d+)', grid_text, flags=re.IGNORECASE)
+        court_schedule = []
+        for chunk in court_chunks:
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            c_match = re.search(r'(?:CAMPO|COURT)\s+(\d+)', chunk, re.IGNORECASE)
+            if not c_match:
+                continue
+            court_name = f"Campo {c_match.group(1)}"
+            times = []
+            for line in chunk.split('\n'):
+                line = line.strip()
+                if not line or re.match(r'^(?:CAMPO|COURT)\s+\d+', line, re.IGNORECASE):
+                    continue
+                m_start = re.search(r'(?:Starting at|Not before)\s*(\d+):(\d+)\s*(AM|PM)', line, re.IGNORECASE)
+                if m_start:
+                    h, m, p = int(m_start.group(1)), m_start.group(2), m_start.group(3).upper()
+                    if p == 'PM' and h < 12: h += 12
+                    if p == 'AM' and h == 12: h = 0
+                    times.append(f"{h:02d}:{m}")
+                elif re.search(r'Followed by', line, re.IGNORECASE):
+                    times.append("A seguir")
+            if times:
+                court_schedule.append({'court': court_name, 'times': times})
+
+        if court_schedule:
+            matches_section_match = re.search(r'(?:FIP PROMISES|FIP PLATINUM|FIP GOLD|FIP SILVER|FIP BRONZE|€\s*\d+)[\s\S]*?(?:(?:[0-9]+\.\s*\n)+)([\s\S]+?)(?:-- \d+ of \d+ --|$)', full_text, re.IGNORECASE)
+            match_section = matches_section_match.group(1) if matches_section_match else full_text
+
+            cat_regex = re.compile(r'\n(U\d+[BG]|MD|WD|MQ|WQ)\b', re.IGNORECASE)
+            raw_matches = []
+            last_idx = 0
+            for cat_m in cat_regex.finditer(match_section):
+                block = match_section[last_idx:cat_m.start()].strip()
+                category = cat_m.group(1)
+                last_idx = cat_m.end()
+                if 'vs' in block.lower():
+                    raw_matches.append({'block': block, 'category': category})
+
+            match_idx = 0
+            for c in court_schedule:
+                for t in c['times']:
+                    if match_idx < len(raw_matches):
+                        rm = raw_matches[match_idx]
+                        slots.append({
+                            'court': c['court'],
+                            'time': t,
+                            'date': data_str,
+                            'raw_text': rm['block'],
+                            'norm_text': normalizar_texto(rm['block'])
+                        })
+                        match_idx += 1
+
+            if slots:
+                return slots
+
+    # 2. Layout de Qualificação (Qualifying Q1 / Q2 por colunas de campos)
     q_matches = re.split(r'(Qualifying\s+Q[12])', full_text)
     if len(q_matches) >= 5:
         # Detectar courts e horas do cabeçalho
-        courts_header = re.findall(r'COURT\s+(\d+)', full_text[:600], re.IGNORECASE)
+        courts_header = re.findall(r'(?:COURT|CAMPO)\s+(\d+)', full_text[:600], re.IGNORECASE)
         courts_list = [f"Campo {c}" for c in courts_header] if courts_header else ["Campo 5", "Campo 6", "Campo 7", "Campo 8"]
 
         court_idx = 0
@@ -139,12 +202,12 @@ def extrair_slots_de_pdf(pdf_bytes, data_str):
                 })
         return slots
 
-    # 2. Layout padrão de Quadro Principal (COURT 1, COURT 2...)
-    court_chunks = re.split(r'(COURT\s+\d+)', full_text, flags=re.IGNORECASE)
+    # 3. Layout padrão de Quadro Principal (COURT 1, COURT 2...)
+    court_chunks = re.split(r'((?:COURT|CAMPO)\s+\d+)', full_text, flags=re.IGNORECASE)
     current_court = ''
 
     for chunk in court_chunks:
-        m_court = re.match(r'COURT\s+(\d+)', chunk.strip(), re.IGNORECASE)
+        m_court = re.match(r'(?:COURT|CAMPO)\s+(\d+)', chunk.strip(), re.IGNORECASE)
         if m_court:
             current_court = f"Campo {m_court.group(1)}"
             continue
