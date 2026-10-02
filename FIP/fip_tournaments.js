@@ -452,22 +452,35 @@ function calcularScoreCorrespondencia(fip, db) {
         if (fipNome.includes(tier) && dbNome.includes(tier)) score += 30;
     }
 
+    let matchGeograficoOuNome = false;
+
     // Cidade
     if (fipCidade && dbNome.includes(fipCidade)) {
         score += 40;
+        matchGeograficoOuNome = true;
     } else if (ALIASES_CIDADES[fipCidade]) {
         for (const alias of ALIASES_CIDADES[fipCidade]) {
             if (dbNome.includes(alias)) {
                 score += 35;
+                matchGeograficoOuNome = true;
                 break;
             }
         }
     }
 
-    // Palavras distintivas (ex: "matosinhos", "mimosa", "almeirim", "elvas", "trofa", "coina")
-    const palavras = fipNome.split(' ').filter(p => p.length >= 5 && !['promises', 'continental', 'hospital', 'master', 'tour'].includes(p));
+    // Palavras distintivas (ex: "matosinhos", "mimosa", "almeirim", "elvas", "trofa", "coina", "caldas")
+    const palavras = fipNome.split(' ').filter(p => p.length >= 4 && !['fip', 'promises', 'continental', 'hospital', 'master', 'tour', 'padel', 'open'].includes(p));
     for (const p of palavras) {
-        if (dbNome.includes(p)) score += 25;
+        if (dbNome.includes(p)) {
+            score += 25;
+            matchGeograficoOuNome = true;
+        }
+    }
+
+    // Se nem a cidade nem nenhuma palavra distintiva for encontrada no registo da BD,
+    // impede absolutamente que torneios de localidades diferentes sejam associados erradamente!
+    if (!matchGeograficoOuNome) {
+        return -100;
     }
 
     // Proximidade de data (se disponível)
@@ -542,11 +555,41 @@ async function sincronizarTodosTorneiosFip(ano = 2026, apenasMapear = false) {
                 await sincronizarFIPParaTabelasFPP(melhorCandidato.fpp_id, fip.eventCode, ano);
             }
         } else {
-            console.log(`⚠️ Sem correspondência direta na BD: [${fip.eventCode}] "${fip.name}" (${fip.city})`);
+            console.log(`⚠️ Sem correspondência na BD existente: [${fip.eventCode}] "${fip.name}" (${fip.city})`);
+            const fppIdAuto = `fip-${ano}-${fip.eventCode.toLowerCase()}`;
+            console.log(`   ➕ A criar registo automático na BD: [${fppIdAuto}] "${fip.fullName || fip.name}"...`);
+
+            const payloadTorneio = {
+                fpp_id: fppIdAuto,
+                nome: fip.fullName || fip.name,
+                clube_nome: fip.venue || (fip.city ? `Clube de Padel ${fip.city}` : 'FIP Tour'),
+                clube_morada: fip.city || 'Portugal',
+                data_inicio: fip.startDate ? new Date(fip.startDate).toISOString().split('T')[0] : null,
+                data_fim: fip.endDate ? new Date(fip.endDate).toISOString().split('T')[0] : null,
+                fip_event_code: fip.eventCode,
+                ano: ano,
+                status: 'Oficial FIP',
+                escalao: fip.league === 'PROMISES' ? 'JUV' : 'ABS',
+                classe: fip.categoryName || (fip.league === 'PROMISES' ? '10.000 JUV' : 'FIP Tour')
+            };
+
+            const { error: insErr } = await supabase
+                .from('torneiosfpp')
+                .upsert(payloadTorneio, { onConflict: 'fpp_id' });
+
+            if (insErr) {
+                console.error(`   ❌ Erro ao criar torneio:`, insErr.message);
+            } else {
+                correspondidos++;
+                console.log(`   ✓ Torneio registado com sucesso na base de dados.`);
+                if (!apenasMapear) {
+                    await sincronizarFIPParaTabelasFPP(fppIdAuto, fip.eventCode, ano);
+                }
+            }
         }
     }
 
-    console.log(`\n🏁 Processo concluído: ${correspondidos}/${torneiosPortugalFip.length} torneios associados.`);
+    console.log(`\n🏁 Processo concluído: ${correspondidos}/${torneiosPortugalFip.length} torneios processados.`);
 }
 
 // -----------------------------------------------------------------------------
@@ -580,8 +623,30 @@ async function main() {
         if (found && found.length > 0) {
             await sincronizarFIPParaTabelasFPP(found[0].fpp_id, argEvent, argAno);
         } else {
-            console.log(`ℹ️ Evento [${argEvent}] não encontrado na coluna fip_event_code. A tentar auto-match...`);
-            await sincronizarTodosTorneiosFip(argAno, false);
+            console.log(`ℹ️ Evento [${argEvent}] não registado na BD. A consultar diretamente a API da FIP...`);
+            const resFip = await fetch(`${FIP_API}/tournament/FIP/${argAno}/${argEvent}`, { headers: FIP_HEADERS });
+            if (resFip.ok) {
+                const fipInfo = await resFip.json();
+                const fppIdAuto = `fip-${argAno}-${argEvent.toLowerCase()}`;
+                console.log(`   ➕ A criar registo automático na BD: [${fppIdAuto}] "${fipInfo.name}"...`);
+                await supabase.from('torneiosfpp').upsert({
+                    fpp_id: fppIdAuto,
+                    nome: fipInfo.fullName || fipInfo.name,
+                    clube_nome: fipInfo.venue || (fipInfo.city ? `Clube de Padel ${fipInfo.city}` : 'FIP Tour'),
+                    clube_morada: fipInfo.city || 'Portugal',
+                    data_inicio: fipInfo.startDate ? new Date(fipInfo.startDate).toISOString().split('T')[0] : null,
+                    data_fim: fipInfo.endDate ? new Date(fipInfo.endDate).toISOString().split('T')[0] : null,
+                    fip_event_code: argEvent,
+                    ano: argAno,
+                    status: 'Oficial FIP',
+                    escalao: fipInfo.league === 'PROMISES' ? 'JUV' : 'ABS',
+                    classe: fipInfo.categoryName || (fipInfo.league === 'PROMISES' ? '10.000 JUV' : 'FIP Tour')
+                }, { onConflict: 'fpp_id' });
+                await sincronizarFIPParaTabelasFPP(fppIdAuto, argEvent, argAno);
+            } else {
+                console.log(`ℹ️ Evento [${argEvent}] não encontrado na API FIP nem na BD. A tentar auto-match geral...`);
+                await sincronizarTodosTorneiosFip(argAno, false);
+            }
         }
     } else if (argTodos || argApenasMapear) {
         // Modo 2: Todos os torneios em Portugal
