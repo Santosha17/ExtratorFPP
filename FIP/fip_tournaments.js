@@ -499,9 +499,13 @@ function calcularScoreCorrespondencia(fip, db) {
     return score;
 }
 
-async function sincronizarTodosTorneiosFip(ano = 2026, apenasMapear = false) {
+async function sincronizarTodosTorneiosFip(ano = 2026, apenasMapear = false, mesFiltro = null) {
     console.log(`\n========================================================`);
-    console.log(`🌍 A procurar todos os torneios FIP em Portugal para o ano ${ano}...`);
+    if (mesFiltro) {
+        console.log(`🌍 A procurar torneios FIP em Portugal para o mês ${mesFiltro}/${ano}...`);
+    } else {
+        console.log(`🌍 A procurar todos os torneios FIP em Portugal para o ano ${ano}...`);
+    }
     console.log(`========================================================`);
 
     const res = await fetch(`${FIP_API}/tournaments/FIP/${ano}`, { headers: FIP_HEADERS });
@@ -511,8 +515,18 @@ async function sincronizarTodosTorneiosFip(ano = 2026, apenasMapear = false) {
     }
 
     const todosTorneiosFip = await res.json();
-    const torneiosPortugalFip = todosTorneiosFip.filter(t => t.countryCode === 'POR' || (t.country && t.country.toLowerCase().includes('portugal')));
-    console.log(`✓ Encontrados ${torneiosPortugalFip.length} torneios FIP agendados para Portugal em ${ano}.\n`);
+    let torneiosPortugalFip = todosTorneiosFip.filter(t => t.countryCode === 'POR' || (t.country && t.country.toLowerCase().includes('portugal')));
+
+    if (mesFiltro !== null) {
+        torneiosPortugalFip = torneiosPortugalFip.filter(t => {
+            if (!t.startDate) return false;
+            const d = new Date(t.startDate);
+            return (d.getMonth() + 1) === mesFiltro;
+        });
+        console.log(`✓ Filtrado para o mês ${mesFiltro}: encontrados ${torneiosPortugalFip.length} torneios FIP em Portugal.\n`);
+    } else {
+        console.log(`✓ Encontrados ${torneiosPortugalFip.length} torneios FIP agendados para Portugal em ${ano}.\n`);
+    }
 
     const { data: dbTorneios, error: dbErr } = await supabase
         .from('torneiosfpp')
@@ -609,6 +623,31 @@ async function main() {
     const argApenasMapear = args.includes('--mapear') || args.includes('--match-only');
     const argTodos = args.includes('--todos') || args.includes('--auto') || args.includes('--all');
 
+    const argMesRaw = getArg('mes') || getArg('month');
+    let argMes = null;
+    if (argMesRaw) {
+        const mapaMeses = {
+            'jan': 1, 'janeiro': 1, 'january': 1,
+            'fev': 2, 'fevereiro': 2, 'feb': 2, 'february': 2,
+            'mar': 3, 'marco': 3, 'março': 3, 'march': 3,
+            'abr': 4, 'abril': 4, 'apr': 4, 'april': 4,
+            'mai': 5, 'maio': 5, 'may': 5,
+            'jun': 6, 'junho': 6, 'june': 6,
+            'jul': 7, 'julho': 7, 'july': 7,
+            'ago': 8, 'agosto': 8, 'aug': 8, 'august': 8,
+            'set': 9, 'setembro': 9, 'sep': 9, 'september': 9,
+            'out': 10, 'outubro': 10, 'oct': 10, 'october': 10,
+            'nov': 11, 'novembro': 11, 'november': 11,
+            'dez': 12, 'dezembro': 12, 'dec': 12, 'december': 12
+        };
+        const parsed = parseInt(argMesRaw, 10);
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= 12) {
+            argMes = parsed;
+        } else if (mapaMeses[argMesRaw.toLowerCase().trim()]) {
+            argMes = mapaMeses[argMesRaw.toLowerCase().trim()];
+        }
+    }
+
     if (argTorneio && argEvent) {
         // Modo 1: Torneio específico especificado
         await sincronizarFIPParaTabelasFPP(argTorneio, argEvent, argAno);
@@ -648,9 +687,9 @@ async function main() {
                 await sincronizarTodosTorneiosFip(argAno, false);
             }
         }
-    } else if (argTodos || argApenasMapear) {
-        // Modo 2: Todos os torneios em Portugal
-        await sincronizarTodosTorneiosFip(argAno, argApenasMapear);
+    } else if (argTodos || argApenasMapear || argMes) {
+        // Modo 2: Todos os torneios (ou filtrados por mês) em Portugal
+        await sincronizarTodosTorneiosFip(argAno, argApenasMapear, argMes);
     } else {
         console.log(`
 🎾 EXTRATOR / SINCRONIZADOR DE TORNEIOS FIP PARA TABELAS FPP
@@ -659,12 +698,16 @@ Uso:
   1. Sincronizar um torneio específico:
      node FIP/fip_tournaments.js --torneio=<fpp_id> --event=<fip_code> [--ano=2026]
      Exemplo:
-     node FIP/fip_tournaments.js --torneio=2026-02-04-fip-bronze-madeira-fpp --event=0602
+     node FIP/fip_tournaments.js --event=P0240 --ano=2026
 
-  2. Sincronizar e mapear TODOS os torneios FIP em Portugal:
+  2. Sincronizar apenas torneios de um mês específico (ex: Outubro):
+     node FIP/fip_tournaments.js --mes=10 [--ano=2026]
+     node FIP/fip_tournaments.js --mes=outubro [--ano=2026]
+
+  3. Sincronizar e mapear TODOS os torneios FIP em Portugal:
      node FIP/fip_tournaments.js --todos [--ano=2026]
 
-  3. Apenas associar os fip_event_code na BD sem transferir jogos:
+  4. Apenas associar os fip_event_code na BD sem transferir jogos:
      node FIP/fip_tournaments.js --todos --mapear
 ------------------------------------------------------------
         `);
